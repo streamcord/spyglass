@@ -23,3 +23,6 @@ out/
 
 # Secrets
 secrets.yml
+
+# Test Config
+spyglass.yml

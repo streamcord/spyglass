@@ -11,11 +11,12 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import org.bson.Document
 import kotlin.system.exitProcess
 
 class TwitchClient private constructor(
     private val httpClient: HttpClient,
-    private val clientID: String, private val accessTokenInfo: ResponseBody.AppAccessToken
+    val clientID: String, private val accessTokenInfo: ResponseBody.AppAccessToken
 ) {
     suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
         val response = httpClient.get<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
@@ -30,14 +31,14 @@ class TwitchClient private constructor(
         return Json.decodeFromString<ResponseBody.GetSubs>(response.readText()).data
     }
 
-    suspend fun createSubscription(userID: String, type: String): SubscriptionData? {
+    suspend fun createSubscription(userID: String, type: SubscriptionType): SubscriptionData? {
         val condition = RequestBody.CreateSub.Condition(userID)
         val transport = RequestBody.CreateSub.Transport("webhook", "https://localhost.com/callback", "bingusbingus")
 
         val response = httpClient.post<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
             header("Content-Type", "application/json")
-            body = Json.encodeToString(RequestBody.CreateSub(type, "1", condition, transport))
+            body = Json.encodeToString(RequestBody.CreateSub(type.string, "1", condition, transport))
         }
 
         if (!response.status.isSuccess()) {
@@ -87,6 +88,14 @@ class TwitchClient private constructor(
     }
 }
 
+enum class SubscriptionType(val string: String) {
+    ONLINE("stream.online"), OFFLINE("stream.offline");
+
+    companion object {
+        fun fromString(string: String) = values().find { it.string == string }
+    }
+}
+
 object ResponseBody {
     @Serializable
     data class AppAccessToken(
@@ -128,3 +137,9 @@ data class SubscriptionData(
     @Serializable
     data class Transport(val method: String, val callback: String)
 }
+
+fun SubscriptionData.toDocument(): Document = Document("subID", id)
+    .append("userID", condition.broadcaster_user_id)
+    .append("transport", transport.method)
+    .append("version", version)
+    .append("created", created_at)

@@ -8,6 +8,26 @@ import kotlin.system.exitProcess
 
 private const val secretsStoreName = "secrets.yml"
 
+private fun readSecretsFile(): SecretsStore {
+    val secretsFile = File(secretsStoreName).takeIf { it.exists() } ?: run {
+        System.err.println(
+            """
+            No $secretsStoreName file in current directory. Create one and format it as such:
+            
+            secrets:
+                <first client ID>: <first client secret>
+                <second client ID>: <second client secret>
+                etc...
+            """.trimIndent()
+        )
+        exitProcess(1)
+    }
+
+    return Yaml.default.decodeFromString(secretsFile.readText())
+}
+
+fun fetchAvailableClientIDs(): Set<String> = readSecretsFile().secrets.keys
+
 fun fetchSecretByID(id: String): String {
     val secretsFile = File(secretsStoreName).takeIf { it.exists() } ?: run {
         System.err.println(
