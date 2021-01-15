@@ -1,0 +1,25 @@
+# IntelliJ IDEA project files
+*.iml
+.idea/
+
+# Gradle cache
+.gradle/
+
+# Compilation output
+build/
+out/
+
+# macOS directory metadata
+.DS_Store
+
+# IntelliJ process attachment files
+.attach_pid*
+
+# JVM heap dump
+*.hprof
+
+# Generated version source file
+/core/src/commonMain/kotlin/Version.kt
+
+# Secrets
+secrets.yml
