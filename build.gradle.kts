@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.4.30-M1"
-    kotlin("plugin.serialization") version "1.4.30-M1"
+    kotlin("jvm") version "1.4.30-RC"
+    kotlin("plugin.serialization") version "1.4.30-RC"
     id("com.github.ben-manes.versions") version "0.36.0"
     id("com.github.johnrengelman.shadow") version "6.1.0"
     application
