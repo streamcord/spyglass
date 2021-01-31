@@ -18,11 +18,11 @@ repositories {
 
 dependencies {
     // HTTP Server
-    implementation("io.ktor", "ktor-server-cio", "1.5.0")
+    implementation("io.ktor", "ktor-server-cio", "1.5.1")
     implementation("org.slf4j", "slf4j-simple", "2.0.0-alpha1")
 
     // HTTP Client
-    implementation("io.ktor", "ktor-client-java", "1.5.0")
+    implementation("io.ktor", "ktor-client-java", "1.5.1")
 
     // Serialization
     implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.0.1")
