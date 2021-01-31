@@ -6,6 +6,7 @@ import io.ktor.client.features.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -18,6 +19,10 @@ class TwitchClient private constructor(
     private val httpClient: HttpClient,
     val clientID: String, private val accessTokenInfo: ResponseBody.AppAccessToken
 ) {
+    private val callbackVerification = CompletableDeferred<Unit>()
+
+    fun verifyCallback() = callbackVerification.complete(Unit)
+
     suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
         val response = httpClient.get<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
@@ -45,6 +50,8 @@ class TwitchClient private constructor(
             System.err.println("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
             return null
         }
+
+        callbackVerification.await()
 
         return Json.decodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
     }

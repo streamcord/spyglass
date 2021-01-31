@@ -17,7 +17,7 @@ class AppConfig(val mongo: Mongo, val aqmp: Aqmp) {
     }
 
     @Serializable
-    class Aqmp(val connection: String, val exchange: String, val queue: String)
+    class Aqmp(val connection: String, val queue: String)
 }
 
 fun loadConfig(): AppConfig {

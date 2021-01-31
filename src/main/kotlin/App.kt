@@ -43,6 +43,10 @@ suspend fun main() {
 
     println()
 
+    val server = createTwitchServer(config.aqmp) { twitchClient.verifyCallback() } ?: run {
+        workersCollection.updateOne(freeSlot, Document("\$set", Document("running", false)))
+    }
+
     // synchronize subscriptions between DB and twitch
     val collection = database.getCollection(config.mongo.collections.subscriptions)
     println("Found subscriptions in DB. Count: ${collection.countDocuments(Document("clientID", clientID))}")
@@ -52,16 +56,18 @@ suspend fun main() {
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
 
 private fun updateWorkerSlots(clientIDs: Collection<String>, workers: MongoCollection<Document>) {
-    // find any available IDs that aren't already registered and register them
-    clientIDs.filter { !workers.find(Document("clientID", it)).any() }
-        .map { Document("clientID", it).append("running", false).append("lastPulse", null) }
-        .takeIf { it.isNotEmpty() }
-        ?.also { workers.insertMany(it) }
+    // find an available ID that isn't already registered and register it
+    clientIDs.find { !workers.find(Document("clientID", it)).any() }
+        ?.let { Document("clientID", it).append("running", false).append("lastPulse", null) }
+        ?.also { workers.insertOne(it) }
 
     // check if any workers are registered but don't have secrets in the secrets file
-    workers.find().map { it["clientID"].toString() }.filter { it !in clientIDs }.forEach {
-        System.err.println("Secret for Twitch client ID $it not found, but this client ID is registered as a worker")
-    }
+    workers.find().toList()
+        .map { it["clientID"].toString() }
+        .filter { it !in clientIDs }
+        .forEach {
+            System.err.println("Secret for Twitch client ID $it not found, but this client ID is registered as a worker")
+        }
 
     // if any "running" workers haven't pulsed in 20 seconds, mark them as not running
     workers.find(Document("running", true)).filter {
@@ -83,10 +89,9 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
 
     // create new subscriptions for any found in DB that weren't reported by Twitch
     collection.find(Document("clientID", twitchClient.clientID))
-        .asSequence()
         .filter { it.getString("subID") !in twitchSubscriptions }
         .associateWith {
-            twitchClient.createSubscription(it.getString("userID"), SubscriptionType.valueOf(it.getString("type")))
+            twitchClient.createSubscription(it.getString("userID"), SubscriptionType.valueOf(it.getString("type")!!))
         }
         .mapValues { it.value?.toDocument()?.append("clientID", twitchClient.clientID) }
         .onEach { (old, new) -> new?.let { collection.replaceOne(old, new) } ?: collection.deleteOne(old) }
@@ -96,7 +101,7 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
     val storedSubscriptions = collection.find(Document("clientID", twitchClient.clientID))
         .associateBy { it.getString("subID") }
 
-    twitchSubscriptions.values.asSequence()
+    twitchSubscriptions.values
         .filter { it.id !in storedSubscriptions }
         .onEach { collection.insertOne(it.toDocument().append("clientID", twitchClient.clientID)) }
         .also { println("Stored ${it.toList().size.ansiBold} subscriptions reported by Twitch but not in DB") }
