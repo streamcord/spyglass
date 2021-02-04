@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.4.30-RC"
-    kotlin("plugin.serialization") version "1.4.30-RC"
+    kotlin("jvm") version "1.4.30"
+    kotlin("plugin.serialization") version "1.4.30"
     id("com.github.ben-manes.versions") version "0.36.0"
     id("com.github.johnrengelman.shadow") version "6.1.0"
     application
@@ -24,7 +24,7 @@ dependencies {
     implementation("io.ktor", "ktor-client-java", "1.5.1")
 
     // Serialization
-    implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.0.1")
+    implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.1.0-RC")
     implementation("com.charleskorn.kaml", "kaml", "0.26.0")
 
     // DB
