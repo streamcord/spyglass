@@ -26,3 +26,7 @@ secrets.yml
 
 # Test Config
 spyglass.yml
+
+# Test Docker Compose config
+docker-compose.yml
+Dockerfile
