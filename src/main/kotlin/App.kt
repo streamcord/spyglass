@@ -1,51 +1,46 @@
 package io.streamcord.webhooks.server
 
-import com.mongodb.client.MongoClient
 import com.mongodb.client.MongoClients
 import com.mongodb.client.MongoCollection
 import org.bson.Document
-import java.time.OffsetDateTime
+import kotlin.random.Random
 import kotlin.system.exitProcess
+
+private val TEMP_SECRET = Random.nextBytes(16).decodeToString()
 
 suspend fun main() {
     val config = loadConfig()
     println("Config read. Starting up worker")
 
-    val mongoClient: MongoClient = MongoClients.create(config.mongo.connection)
+    val clientID = System.getenv("SPYGLASS_CLIENT_ID")?.let { ClientID(it) }
+        ?: noEnv("No client ID found. Populate env variable SPYGLASS_CLIENT_ID with the desired Twitch client ID.")
+
+    val clientSecret = System.getenv("SPYGLASS_CLIENT_SECRET")?.let { ClientSecret(it) }
+        ?: noEnv("No client secret found. Populate env variable SPYGLASS_CLIENT_SECRET with the desired Twitch client secret.")
+
+    val callbackUri = System.getenv("SPYGLASS_WEBHOOK_CALLBACK")
+        ?: noEnv("No webhook callback found. Populate env variable SPYGLASS_WEBHOOK_CALLBACK with the desired callback URI.")
+
+    println("Starting worker with client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri}")
+
+    val mongoClient = MongoClients.create(config.mongo.connection)
     val database = mongoClient.getDatabase(config.mongo.database)
 
-    // fetch worker slots and update them with some error correction
-    val workersCollection = database.getCollection(config.mongo.collections.workers).also {
-        updateWorkerSlots(fetchAvailableClientIDs(), it)
-    }
+    // add worker to worker slot
+    val workersCollection = database.getCollection(config.mongo.collections.workers)
+    workersCollection.insertOne(Document("client_id", clientID.value).append("callback", callbackUri))
 
-    // find a free worker slot. If there isn't one, report it and exit the program
-    val freeSlot = workersCollection.find(Document("running", false)).firstOrNull() ?: run {
-        System.err.println(
-            """
-            All currently available worker slots are running. 
-            Add a new Twitch client ID and secret to the secret store before starting a new worker.
-        """.trimIndent()
-        )
-        exitProcess(5)
-    }
+    // remove this worker from the collection on exit
+    Runtime.getRuntime().addShutdownHook(Thread {
+        workersCollection.deleteOne(Document("client_id", clientID.value))
+    })
 
-    workersCollection.updateOne(freeSlot, Document("\$set", Document("running", true)))
-
-    val clientID = freeSlot["clientID"].toString()
-    println("Starting worker with client ID [${clientID.ansiBold}]")
-
-    val clientSecret = fetchSecretByID(clientID)
-    println("Successfully loaded secret for client ID [${clientID.ansiBold}]")
-
-    val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret)
+    val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret, callbackUri)
     println("Created Twitch client with new access token. Expires in $expiresIn seconds")
 
     println()
 
-    val server = createTwitchServer(config.aqmp) { twitchClient.verifyCallback() } ?: run {
-        workersCollection.updateOne(freeSlot, Document("\$set", Document("running", false)))
-    }
+    createHttpServer(twitchClient, config.aqmp)
 
     // synchronize subscriptions between DB and twitch
     val collection = database.getCollection(config.mongo.collections.subscriptions)
@@ -55,27 +50,9 @@ suspend fun main() {
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
 
-private fun updateWorkerSlots(clientIDs: Collection<String>, workers: MongoCollection<Document>) {
-    // find an available ID that isn't already registered and register it
-    clientIDs.find { !workers.find(Document("clientID", it)).any() }
-        ?.let { Document("clientID", it).append("running", false).append("lastPulse", null) }
-        ?.also { workers.insertOne(it) }
-
-    // check if any workers are registered but don't have secrets in the secrets file
-    workers.find().toList()
-        .map { it["clientID"].toString() }
-        .filter { it !in clientIDs }
-        .forEach {
-            System.err.println("Secret for Twitch client ID $it not found, but this client ID is registered as a worker")
-        }
-
-    // if any "running" workers haven't pulsed in 20 seconds, mark them as not running
-    workers.find(Document("running", true)).filter {
-        val lastPulse = it["lastPulse"]?.toString()
-        lastPulse == null || OffsetDateTime.parse(lastPulse).isBefore(OffsetDateTime.now().minusSeconds(20))
-    }.forEach {
-        workers.updateOne(it, Document("\$set", Document("running", false)))
-    }
+private fun noEnv(message: String): Nothing {
+    System.err.println(message)
+    exitProcess(1)
 }
 
 /**
@@ -88,21 +65,25 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
     println("Fetched existing subscriptions from Twitch. Count: ${twitchSubscriptions.size}")
 
     // create new subscriptions for any found in DB that weren't reported by Twitch
-    collection.find(Document("clientID", twitchClient.clientID))
-        .filter { it.getString("subID") !in twitchSubscriptions }
-        .associateWith {
-            twitchClient.createSubscription(it.getString("userID"), SubscriptionType.valueOf(it.getString("type")!!))
+    collection.find(Document("client_id", twitchClient.clientID))
+        .asSequence()
+        .filter { val subID = it.getString("sub_id"); subID != null && subID !in twitchSubscriptions }
+        .associateWith { twitchClient.createSubscription(it.getString("user_id"), it.getString("type")!!) }
+        .filter {
+            val isNull = it.value == null
+            if (isNull)
+                System.err.println("Failed to recreate missing subscription with sub ID ${it.key.getString("sub_id")}")
+            !isNull
         }
-        .mapValues { it.value?.toDocument()?.append("clientID", twitchClient.clientID) }
-        .onEach { (old, new) -> new?.let { collection.replaceOne(old, new) } ?: collection.deleteOne(old) }
+        .onEach { collection.updateSubscription(it.key, it.value!!.id) }
         .also { println("Created ${it.size.ansiBold} subscriptions found in DB but not reported by Twitch") }
 
     // store subscriptions that were reported by Twitch but weren't in the DB
-    val storedSubscriptions = collection.find(Document("clientID", twitchClient.clientID))
-        .associateBy { it.getString("subID") }
+    val storedSubscriptions = collection.find(Document("client_id", twitchClient.clientID))
+        .associateBy { it.getString("sub_id") }
 
     twitchSubscriptions.values
         .filter { it.id !in storedSubscriptions }
-        .onEach { collection.insertOne(it.toDocument().append("clientID", twitchClient.clientID)) }
-        .also { println("Stored ${it.toList().size.ansiBold} subscriptions reported by Twitch but not in DB") }
+        .onEach { collection.insertSubscription(twitchClient.clientID, TEMP_SECRET, it) }
+        .also { println("Stored ${it.size.ansiBold} subscriptions reported by Twitch but not in DB") }
 }

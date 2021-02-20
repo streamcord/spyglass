@@ -12,13 +12,13 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import org.bson.Document
 import kotlin.system.exitProcess
 
 class TwitchClient private constructor(
-    private val httpClient: HttpClient,
-    val clientID: String, private val accessTokenInfo: ResponseBody.AppAccessToken
+    val clientID: String, private val callbackUri: String,
+    private val accessTokenInfo: ResponseBody.AppAccessToken
 ) {
+    private val httpClient = HttpClient(Java)
     private val callbackVerification = CompletableDeferred<Unit>()
 
     fun verifyCallback() = callbackVerification.complete(Unit)
@@ -36,14 +36,14 @@ class TwitchClient private constructor(
         return Json.decodeFromString<ResponseBody.GetSubs>(response.readText()).data
     }
 
-    suspend fun createSubscription(userID: String, type: SubscriptionType): SubscriptionData? {
+    suspend fun createSubscription(userID: String, type: String): SubscriptionData? {
         val condition = RequestBody.CreateSub.Condition(userID)
-        val transport = RequestBody.CreateSub.Transport("webhook", "https://localhost.com/callback", "bingusbingus")
+        val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri", "bingusbingus")
 
         val response = httpClient.post<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
             header("Content-Type", "application/json")
-            body = Json.encodeToString(RequestBody.CreateSub(type.string, "1", condition, transport))
+            body = Json.encodeToString(RequestBody.CreateSub(type, "1", condition, transport))
         }
 
         if (!response.status.isSuccess()) {
@@ -63,7 +63,7 @@ class TwitchClient private constructor(
         }
 
         if (!response.status.isSuccess()) {
-            System.err.println("Failed to delete subscription with ID $subID. ${response.readText()}")
+            System.err.println("Failed to delete subscription with ID $subID. Error ${response.readText()}")
         }
     }
 
@@ -74,34 +74,28 @@ class TwitchClient private constructor(
     }
 
     companion object {
-        suspend fun create(clientID: String, clientSecret: String): Pair<TwitchClient, Long> {
-            val httpClient = HttpClient(Java)
+        suspend fun create(id: ClientID, secret: ClientSecret, callbackUri: String): Pair<TwitchClient, Long> =
+            HttpClient(Java).use { httpClient ->
+                val response = httpClient.post<HttpResponse>("https://id.twitch.tv/oauth2/token") {
+                    expectSuccess = false
+                    parameter("client_id", id.value)
+                    parameter("client_secret", secret.value)
+                    parameter("grant_type", "client_credentials")
+                }
 
-            val response = httpClient.post<HttpResponse>("https://id.twitch.tv/oauth2/token") {
-                expectSuccess = false
-                parameter("client_id", clientID)
-                parameter("client_secret", clientSecret)
-                parameter("grant_type", "client_credentials")
+                if (!response.status.isSuccess()) {
+                    System.err.println("Failed to fetch access token from Twitch. Error ${response.readText()}")
+                    exitProcess(2)
+                }
+
+                val accessTokenInfo: ResponseBody.AppAccessToken = Json.decodeFromString(response.readText())
+                return TwitchClient(id.value, callbackUri, accessTokenInfo) to accessTokenInfo.expires_in
             }
-
-            if (!response.status.isSuccess()) {
-                System.err.println("Failed to fetch access token from Twitch. Error ${response.readText()}")
-                exitProcess(2)
-            }
-
-            val accessTokenInfo: ResponseBody.AppAccessToken = Json.decodeFromString(response.readText())
-            return TwitchClient(httpClient, clientID, accessTokenInfo) to accessTokenInfo.expires_in
-        }
     }
 }
 
-enum class SubscriptionType(val string: String) {
-    ONLINE("stream.online"), OFFLINE("stream.offline");
-
-    companion object {
-        fun fromString(string: String) = values().find { it.string == string }
-    }
-}
+inline class ClientSecret(val value: String)
+inline class ClientID(val value: String)
 
 object ResponseBody {
     @Serializable
@@ -144,9 +138,3 @@ data class SubscriptionData(
     @Serializable
     data class Transport(val method: String, val callback: String)
 }
-
-fun SubscriptionData.toDocument(): Document = Document("subID", id)
-    .append("userID", condition.broadcaster_user_id)
-    .append("transport", transport.method)
-    .append("version", version)
-    .append("created", created_at)

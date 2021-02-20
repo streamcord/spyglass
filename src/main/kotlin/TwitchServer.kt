@@ -4,16 +4,16 @@ import io.ktor.application.*
 import io.ktor.request.*
 import io.ktor.response.*
 import io.ktor.routing.*
-import io.ktor.server.cio.*
 import io.ktor.server.engine.*
+import io.ktor.server.netty.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
-fun createTwitchServer(aqmpConfig: AppConfig.Aqmp, onVerify: () -> Unit): CIOApplicationEngine? {
-    val aqmpSender = AqmpSender.create(aqmpConfig) ?: return null
+fun createHttpServer(twitchClient: TwitchClient, aqmpConfig: AppConfig.Aqmp) {
+    // val aqmpSender = AqmpSender.create(aqmpConfig) ?: return null
 
-    return embeddedServer(CIO) {
+    embeddedServer(Netty, port = 8080) {
         routing {
             post("webhooks/callback") {
                 val text = call.receiveText()
@@ -22,13 +22,13 @@ fun createTwitchServer(aqmpConfig: AppConfig.Aqmp, onVerify: () -> Unit): CIOApp
                     "webhook_callback_verification" -> {
                         val verificationBody = Json.decodeFromString<CallbackVerificationBody>(text)
                         call.respond(verificationBody.challenge)
-                        onVerify()
+                        twitchClient.verifyCallback()
                     }
-                    "notification" -> aqmpSender.send(text)
+                    "notification" -> println(text)
                 }
             }
         }
-    }
+    }.start(wait = true)
 }
 
 @Serializable
