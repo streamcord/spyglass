@@ -84,6 +84,6 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
 
     twitchSubscriptions.values
         .filter { it.id !in storedSubscriptions }
-        .onEach { collection.insertSubscription(twitchClient.clientID, TEMP_SECRET, it) }
+        .onEach { collection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it) }
         .also { println("Stored ${it.size.ansiBold} subscriptions reported by Twitch but not in DB") }
 }
