@@ -2,6 +2,14 @@ package io.streamcord.webhooks.server
 
 import com.mongodb.client.MongoClients
 import com.mongodb.client.MongoCollection
+import com.mongodb.client.model.Aggregates.match
+import com.mongodb.client.model.Filters.`in`
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import org.bson.Document
 import kotlin.random.Random
 import kotlin.system.exitProcess
@@ -44,8 +52,13 @@ suspend fun main() {
 
     // synchronize subscriptions between DB and twitch
     val collection = database.getCollection(config.mongo.collections.subscriptions)
-    println("Found subscriptions in DB. Count: ${collection.countDocuments(Document("clientID", clientID))}")
+    println("Found subscriptions in DB. Count: ${collection.countDocuments(Document("client_id", clientID))}")
     syncSubscriptions(twitchClient, collection)
+
+    val notificationsCollection = database.getCollection(config.mongo.collections.notifications)
+
+    val scope = CoroutineScope(Dispatchers.Main)
+    scope.watchNotificationCreation(twitchClient, notificationsCollection, collection)
 }
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
@@ -86,4 +99,39 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
         .filter { it.id !in storedSubscriptions }
         .onEach { collection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it) }
         .also { println("Stored ${it.size.ansiBold} subscriptions reported by Twitch but not in DB") }
+}
+
+private fun CoroutineScope.watchNotificationCreation(
+    twitchClient: TwitchClient,
+    notificationsCollection: MongoCollection<Document>,
+    subscriptionsCollection: MongoCollection<Document>
+) {
+    notificationsCollection.watch(listOf(match(`in`("operationType", listOf("insert")))))
+        .asFlow()
+        .onEach { streamDocument ->
+            val fullDocument = streamDocument.fullDocument!!
+
+            if (fullDocument.getString("client_id") != twitchClient.clientID.value) {
+                return@onEach
+            }
+            val streamerID = fullDocument.getString("streamer_id")
+
+            val existing = subscriptionsCollection.find(document {
+                append("client_id", twitchClient.clientID.value)
+                append("user_id", streamerID)
+            })
+
+            // already have subscriptions for this user, return
+            if (existing.any()) return@onEach
+
+            twitchClient.createSubscription(streamerID, "stream.online")?.let {
+                subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
+            } ?: return@onEach
+
+            twitchClient.createSubscription(streamerID, "stream.offline")?.let {
+                subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
+            } ?: return@onEach
+        }
+        .catch { cause -> System.err.println("Exception in change stream watch: $cause") }
+        .launchIn(this)
 }

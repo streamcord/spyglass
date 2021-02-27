@@ -13,7 +13,7 @@ class AppConfig(val mongo: Mongo, val aqmp: Aqmp) {
     @Serializable
     class Mongo(val connection: String, val database: String, val collections: Collections) {
         @Serializable
-        class Collections(val subscriptions: String, val workers: String)
+        class Collections(val subscriptions: String, val workers: String, val notifications: String)
     }
 
     @Serializable
@@ -32,6 +32,7 @@ fun loadConfig(): AppConfig {
                     collections:
                         subscriptions: <name of collection, e.g. "subscriptions">
                         workers: <name of collection, e.g. "workers">
+                        notifications: <name of collection, e.g. "notifications">
                 
                 aqmp:
                     connection: <connection string, e.g. "localhost">

@@ -22,7 +22,7 @@ fun MongoCollection<Document>.updateSubscription(original: Document, newSubID: S
     updateOne(original, setValues("sub_id" to newSubID, "verified" to false, "verified_at" to null))
 }
 
-private inline fun document(init: Document.() -> Unit) = Document().apply(init)
+inline fun document(init: Document.() -> Unit) = Document().apply(init)
 
 private fun setValues(first: Pair<String, Any?>, vararg extra: Pair<String, Any?>) =
     Document("\$set", Document(first.first, first.second).let { doc ->
