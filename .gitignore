@@ -33,3 +33,6 @@ Dockerfile
 
 # Justfile for test building and running
 justfile
+
+# self-contained test environment
+testenv

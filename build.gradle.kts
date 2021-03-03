@@ -21,6 +21,7 @@ dependencies {
 
     // HTTP Client
     implementation("io.ktor", "ktor-client-java", "1.5.2")
+    implementation("io.ktor", "ktor-client-logging", "1.5.2")
 
     // Serialization
     implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.1.0")
@@ -31,6 +32,9 @@ dependencies {
 
     // MQ
     implementation("com.rabbitmq", "amqp-client", "5.11.0")
+
+    // Logging
+    implementation("io.github.microutils", "kotlin-logging", "2.0.4")
 
     // Tests
     testImplementation(kotlin("test-junit5"))

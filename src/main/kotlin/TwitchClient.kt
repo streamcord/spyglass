@@ -7,8 +7,6 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -26,7 +24,7 @@ class TwitchClient private constructor(
 
     fun verifyCallback() = callbackVerification.complete(Unit)
 
-    suspend fun fetchExistingSubscriptions(): List<SubscriptionData> = withContext(Dispatchers.Main) {
+    suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
         awaitingToken?.await()
 
         val response = httpClient.get<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
@@ -36,7 +34,7 @@ class TwitchClient private constructor(
         // if unauthorized, get a new access token and store it, then rerun the request
         if (response.status == HttpStatusCode.Unauthorized) {
             refetchToken()
-            return@withContext fetchExistingSubscriptions()
+            return fetchExistingSubscriptions()
         }
 
         if (!response.status.isSuccess()) {
@@ -44,10 +42,10 @@ class TwitchClient private constructor(
             exitProcess(3)
         }
 
-        Json.decodeFromString<ResponseBody.GetSubs>(response.readText()).data
+        return Json.decodeFromString<ResponseBody.GetSubs>(response.readText()).data
     }
 
-    suspend fun createSubscription(userID: String, type: String): SubscriptionData? = withContext(Dispatchers.Main) {
+    suspend fun createSubscription(userID: String, type: String): SubscriptionData? {
         awaitingToken?.await()
 
         val condition = RequestBody.CreateSub.Condition(userID)
@@ -62,10 +60,10 @@ class TwitchClient private constructor(
         // if unauthorized, get a new access token and store it, then rerun the request
         if (response.status == HttpStatusCode.Unauthorized) {
             refetchToken()
-            return@withContext createSubscription(userID, type)
+            return createSubscription(userID, type)
         }
 
-        if (!response.status.isSuccess()) {
+        return if (!response.status.isSuccess()) {
             System.err.println("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
             null
         } else {
@@ -74,7 +72,7 @@ class TwitchClient private constructor(
         }
     }
 
-    suspend fun removeSubscription(subID: String): Unit = withContext(Dispatchers.Main) {
+    suspend fun removeSubscription(subID: String) {
         awaitingToken?.await()
 
         val response = httpClient.delete<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
@@ -85,7 +83,7 @@ class TwitchClient private constructor(
         // if unauthorized, get a new access token and store it, then rerun the request
         if (response.status == HttpStatusCode.Unauthorized) {
             refetchToken()
-            return@withContext removeSubscription(subID)
+            return removeSubscription(subID)
         }
 
         if (!response.status.isSuccess()) {
@@ -105,7 +103,7 @@ class TwitchClient private constructor(
             return
         }
 
-        System.out.println("Encountered 401 Unauthorized from Twitch, fetching new access token...")
+        println("Encountered 401 Unauthorized from Twitch, fetching new access token...")
         awaitingToken = CompletableDeferred()
         accessTokenInfo = httpClient.fetchAccessToken(clientID, clientSecret)
         awaitingToken?.complete(Unit)

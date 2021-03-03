@@ -8,7 +8,7 @@ fun MongoCollection<Document>.insertSubscription(clientID: String, secret: Strin
         append("client_id", clientID)
         append("sub_id", data.id)
         append("created_at", data.created_at)
-        append("messages", arrayOf<String>())
+        append("messages", listOf<String>())
         append("revoked", false)
         append("secret", secret)
         append("type", data.type)

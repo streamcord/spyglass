@@ -27,7 +27,7 @@ fun loadConfig(): AppConfig {
                 No $configName file in current directory. Create one and format it as such:
                 
                 mongo:
-                    connection: <connection string, e.g. "mongodb://localhost">
+                    connection: <connection string for replica set, e.g. "mongodb://localhost">
                     database: <name of db, e.g. "eventsub">
                     collections:
                         subscriptions: <name of collection, e.g. "subscriptions">

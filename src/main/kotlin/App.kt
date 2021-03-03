@@ -5,18 +5,18 @@ import com.mongodb.client.MongoCollection
 import com.mongodb.client.model.Aggregates.match
 import com.mongodb.client.model.Filters.`in`
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.runBlocking
 import org.bson.Document
 import kotlin.random.Random
 import kotlin.system.exitProcess
 
-private val TEMP_SECRET = Random.nextBytes(16).decodeToString()
+internal val TEMP_SECRET = Random.nextBytes(16).decodeToString()
 
-suspend fun main() {
+fun main() = runBlocking {
     val config = loadConfig()
     println("Config read. Starting up worker")
 
@@ -52,13 +52,12 @@ suspend fun main() {
 
     // synchronize subscriptions between DB and twitch
     val collection = database.getCollection(config.mongo.collections.subscriptions)
-    println("Found subscriptions in DB. Count: ${collection.countDocuments(Document("client_id", clientID))}")
+    println("Found subscriptions in DB. Count: ${collection.countDocuments(Document("client_id", clientID.value))}")
     syncSubscriptions(twitchClient, collection)
+    collection.find().forEach { println(it.toJson()) }
 
     val notificationsCollection = database.getCollection(config.mongo.collections.notifications)
-
-    val scope = CoroutineScope(Dispatchers.Main)
-    scope.watchNotificationCreation(twitchClient, notificationsCollection, collection)
+    watchNotificationCreation(twitchClient, notificationsCollection, collection)
 }
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
@@ -78,7 +77,7 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
     println("Fetched existing subscriptions from Twitch. Count: ${twitchSubscriptions.size}")
 
     // create new subscriptions for any found in DB that weren't reported by Twitch
-    collection.find(Document("client_id", twitchClient.clientID))
+    collection.find(Document("client_id", twitchClient.clientID.value))
         .asSequence()
         .filter { val subID = it.getString("sub_id"); subID != null && subID !in twitchSubscriptions }
         .associateWith { twitchClient.createSubscription(it.getString("user_id"), it.getString("type")!!) }
@@ -92,7 +91,7 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
         .also { println("Created ${it.size.ansiBold} subscriptions found in DB but not reported by Twitch") }
 
     // store subscriptions that were reported by Twitch but weren't in the DB
-    val storedSubscriptions = collection.find(Document("client_id", twitchClient.clientID))
+    val storedSubscriptions = collection.find(Document("client_id", twitchClient.clientID.value))
         .associateBy { it.getString("sub_id") }
 
     twitchSubscriptions.values
