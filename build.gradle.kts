@@ -41,12 +41,16 @@ dependencies {
     testImplementation("org.junit.jupiter", "junit-jupiter", "5.7.0")
 }
 
+kotlin.sourceSets["main"].languageSettings.apply {
+    useExperimentalAnnotation("kotlin.RequiresOptIn")
+    enableLanguageFeature("InlineClasses")
+}
+
 tasks {
     withType<KotlinCompile>().configureEach {
         kotlinOptions.jvmTarget = "11" // require Java 11 so we can use the built-in HttpClient
         kotlinOptions.useIR = true
         kotlinOptions.languageVersion = "1.5" // for sealed interfaces and value classes
-        kotlinOptions.freeCompilerArgs = listOf("-Xinline-classes")
     }
 
     withType<Test>().configureEach {

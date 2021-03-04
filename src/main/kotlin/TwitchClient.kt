@@ -3,7 +3,6 @@ package io.streamcord.webhooks.server
 import io.ktor.client.*
 import io.ktor.client.engine.java.*
 import io.ktor.client.features.*
-import io.ktor.client.features.logging.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -19,12 +18,9 @@ class TwitchClient private constructor(
     private var accessTokenInfo: ResponseBody.AppAccessToken
 ) {
     private val httpClient = HttpClient(Java) {
-        install(Logging)
+        // install(Logging)
     }
-    private val callbackVerifications = CompletableDeferred<Unit>()
     private var awaitingToken: CompletableDeferred<Unit>? = null
-
-    fun verifyCallback() = callbackVerifications.complete(Unit)
 
     suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
         awaitingToken?.await()
@@ -67,10 +63,9 @@ class TwitchClient private constructor(
         }
 
         return if (!response.status.isSuccess()) {
-            System.err.println("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
+            logger.error("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
             null
         } else {
-            callbackVerifications.await()
             Json.safeDecodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
         }
     }
@@ -132,7 +127,7 @@ class TwitchClient private constructor(
             }
 
             if (!response.status.isSuccess()) {
-                System.err.println("Failed to fetch access token from Twitch. Error ${response.readText()}")
+                logger.error("Failed to fetch access token from Twitch. Error ${response.readText()}")
                 exitProcess(2)
             }
 

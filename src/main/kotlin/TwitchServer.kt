@@ -1,5 +1,6 @@
 package io.streamcord.webhooks.server
 
+import com.mongodb.client.MongoCollection
 import io.ktor.application.*
 import io.ktor.http.*
 import io.ktor.request.*
@@ -12,69 +13,105 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
+import org.bson.Document
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-fun createHttpServer(twitchClient: TwitchClient, aqmpConfig: AppConfig.Aqmp): NettyApplicationEngine {
-    val aqmpSender = AqmpSender.create(aqmpConfig)// ?: error("Failed to open AQMP sender")
-
-    return embeddedServer(Netty, port = 8080) {
+class TwitchServer(private val subscriptions: MongoCollection<Document>, private val sender: Sender) {
+    private val httpServer = embeddedServer(Netty, port = 8080) {
         routing {
             post("webhooks/callback") {
-                println("Request received")
-                val text = call.receiveText()
+                logger.trace("Request received")
+                handleCallback(call.receiveText())
+            }
+        }
+    }
 
-                val hmacMessage = call.request.headers.let {
-                    it["Twitch-Eventsub-Message-Id"] + it["Twitch-Eventsub-Message-Timestamp"] + text
-                }
+    fun start() {
+        httpServer.start(wait = false)
+    }
 
-                val secretKey = SecretKeySpec(TEMP_SECRET.encodeToByteArray(), "HmacSHA256")
-                val hMacSHA256 = Mac.getInstance("HmacSHA256").apply { init(secretKey) }
-                val expectedSignatureHeader =
-                    "sha256=" + hMacSHA256.doFinal(hmacMessage.encodeToByteArray()).toHexString()
-                val actualSignatureHeader = call.request.header("Twitch-Eventsub-Message-Signature")
+    private suspend fun PipelineContext<Unit, ApplicationCall>.handleCallback(text: String) {
+        when (call.request.header("Twitch-Eventsub-Message-Type")) {
+            "webhook_callback_verification" -> {
+                val verificationBody = Json.safeDecodeFromString<CallbackVerificationBody>(text)
 
-                if (expectedSignatureHeader != actualSignatureHeader) {
-                    System.err.println("Received request to webhooks/callback that failed verification")
-                    System.err.println("Expected signature header: $expectedSignatureHeader")
-                    System.err.println("Actual signature header:   $actualSignatureHeader")
+                if (verifyRequest(subscriptions, verificationBody.subscription.id, text)) {
+                    call.respond(HttpStatusCode.Accepted, verificationBody.challenge)
+                } else {
                     call.respond(HttpStatusCode.Unauthorized)
-                } else when (call.request.header("Twitch-Eventsub-Message-Type")) {
-                    "webhook_callback_verification" -> {
-                        println("VERIFICATION BODY TEXT: $text")
-                        val verificationBody = Json.safeDecodeFromString<CallbackVerificationBody>(text)
-                        call.respond(verificationBody.challenge)
-                        twitchClient.verifyCallback()
-                    }
-                    "notification" -> {
-                        handleNotification(aqmpSender, text)
-                        call.respond(HttpStatusCode.Accepted)
-                    }
+                }
+            }
+            "notification" -> {
+                val notification: TwitchNotification = Json.safeDecodeFromString(text)
+
+                if (verifyRequest(subscriptions, notification.subscription.id, text)) {
+                    logger.trace("Request verified, handling notification")
+                    handleNotification(sender, notification)
+                    call.respond(HttpStatusCode.Accepted)
+                } else {
+                    call.respond(HttpStatusCode.Unauthorized)
                 }
             }
         }
     }
+
+    companion object {
+        fun create(subsCollection: MongoCollection<Document>, aqmpConfig: AppConfig.Aqmp): TwitchServer {
+            val sender = Sender.Logger ?: error("Failed to open AQMP sender")
+
+            return TwitchServer(subsCollection, sender)
+        }
+    }
 }
 
-private fun PipelineContext<Unit, ApplicationCall>.handleNotification(sender: AqmpSender?, text: String) {
-    println("Received notification")
-    val notification: TwitchNotification = Json.safeDecodeFromString(text)
+private fun PipelineContext<Unit, ApplicationCall>.verifyRequest(
+    subsCollection: MongoCollection<Document>,
+    subID: String,
+    text: String
+): Boolean {
+    val subscription = subsCollection.find(Document("sub_id", subID)).firstOrNull() ?: run {
+        logger.warn("Request failed verification: no sub ID $subID in database")
+        return false
+    }
 
+    val expectedSecret = subscription.getString("secret")
+
+    val hmacMessage = call.request.headers.let {
+        it["Twitch-Eventsub-Message-Id"] + it["Twitch-Eventsub-Message-Timestamp"] + text
+    }
+
+    val secretKey = SecretKeySpec(expectedSecret.encodeToByteArray(), "HmacSHA256")
+    val hMacSHA256 = Mac.getInstance("HmacSHA256").apply { init(secretKey) }
+    val expectedSignatureHeader =
+        "sha256=" + hMacSHA256.doFinal(hmacMessage.encodeToByteArray()).toHexString()
+    val actualSignatureHeader = call.request.header("Twitch-Eventsub-Message-Signature")
+
+    return if (expectedSignatureHeader != actualSignatureHeader) {
+        logger.warn("Received request to webhooks/callback that failed verification")
+        logger.warn("Expected signature header: $expectedSignatureHeader")
+        logger.warn("Actual signature header:   $actualSignatureHeader")
+        false
+    } else true
+}
+
+private fun PipelineContext<Unit, ApplicationCall>.handleNotification(
+    sender: Sender,
+    notification: TwitchNotification
+) {
     when (val subType = call.request.header("Twitch-Eventsub-Subscription-Type")) {
         "stream.online" -> {
             val eventData = Json.decodeFromJsonElement<TwitchEvent.StreamOnline>(notification.event)
 
             if (eventData.type == "live") {
-                sender?.sendOnlineEvent(eventData.id, eventData.broadcaster_user_id)
-                println("Online event received for user ${eventData.broadcaster_user_name}")
+                sender.sendOnlineEvent(eventData.id, eventData.broadcaster_user_id, eventData.broadcaster_user_name)
             }
         }
         "stream.offline" -> {
             val eventData = Json.decodeFromJsonElement<TwitchEvent.StreamOffline>(notification.event)
-            sender?.sendOfflineEvent(eventData.broadcaster_user_id)
-            println("Offline event received for user ${eventData.broadcaster_user_name}")
+            sender.sendOfflineEvent(eventData.broadcaster_user_id, eventData.broadcaster_user_name)
         }
-        else -> System.err.println("Received notification for subscription type $subType, ignoring")
+        else -> logger.warn("Received notification for subscription type $subType, ignoring")
     }
 }
 

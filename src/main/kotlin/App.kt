@@ -10,15 +10,17 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
+import mu.KotlinLogging
 import org.bson.Document
 import kotlin.random.Random
 import kotlin.system.exitProcess
 
 internal val TEMP_SECRET = Random.nextBytes(16).decodeToString()
+internal val logger = KotlinLogging.logger {}
 
 fun main() = runBlocking {
     val config = loadConfig()
-    println("Config read. Starting up worker")
+    logger.info("Config read. Starting up worker")
 
     val clientID = System.getenv("SPYGLASS_CLIENT_ID")?.let { ClientID(it) }
         ?: noEnv("No client ID found. Populate env variable SPYGLASS_CLIENT_ID with the desired Twitch client ID.")
@@ -29,7 +31,7 @@ fun main() = runBlocking {
     val callbackUri = System.getenv("SPYGLASS_WEBHOOK_CALLBACK")
         ?: noEnv("No webhook callback found. Populate env variable SPYGLASS_WEBHOOK_CALLBACK with the desired callback URI.")
 
-    println("Starting worker with client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri}")
+    logger.info("Starting worker with client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri}")
 
     val mongoClient = MongoClients.create(config.mongo.connection)
     val database = mongoClient.getDatabase(config.mongo.database)
@@ -44,17 +46,16 @@ fun main() = runBlocking {
     })
 
     val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret, callbackUri)
-    println("Created Twitch client with new access token. Expires in $expiresIn seconds")
+    logger.debug("Created Twitch client with new access token. Expires in $expiresIn seconds")
 
-    println()
-
-    createHttpServer(twitchClient, config.aqmp).start(wait = false)
+    val collection = database.getCollection(config.mongo.collections.subscriptions)
+    TwitchServer.create(collection, config.aqmp).start()
 
     // synchronize subscriptions between DB and twitch
-    val collection = database.getCollection(config.mongo.collections.subscriptions)
-    println("Found subscriptions in DB. Count: ${collection.countDocuments(Document("client_id", clientID.value))}")
+    logger.debug(
+        "Found subscriptions in DB. Count: ${collection.countDocuments(Document("client_id", clientID.value))}"
+    )
     syncSubscriptions(twitchClient, collection)
-    collection.find().forEach { println(it.toJson()) }
 
     val notificationsCollection = database.getCollection(config.mongo.collections.notifications)
     watchNotificationCreation(twitchClient, notificationsCollection, collection)
@@ -63,7 +64,7 @@ fun main() = runBlocking {
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
 
 private fun noEnv(message: String): Nothing {
-    System.err.println(message)
+    logger.error(message)
     exitProcess(1)
 }
 
@@ -74,7 +75,7 @@ private fun noEnv(message: String): Nothing {
  */
 private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: MongoCollection<Document>) {
     val twitchSubscriptions = twitchClient.fetchExistingSubscriptions().associateBy { it.id }
-    println("Fetched existing subscriptions from Twitch. Count: ${twitchSubscriptions.size}")
+    logger.info("Fetched existing subscriptions from Twitch. Count: ${twitchSubscriptions.size}")
 
     // create new subscriptions for any found in DB that weren't reported by Twitch
     collection.find(Document("client_id", twitchClient.clientID.value))
@@ -83,12 +84,15 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
         .associateWith { twitchClient.createSubscription(it.getString("user_id"), it.getString("type")!!) }
         .filter {
             val isNull = it.value == null
-            if (isNull)
-                System.err.println("Failed to recreate missing subscription with sub ID ${it.key.getString("sub_id")}")
+            if (isNull) {
+                logger.warn("Failed to recreate missing subscription with sub ID ${it.key.getString("sub_id")}, deleting")
+                collection.deleteOne(it.key)
+            }
+
             !isNull
         }
         .onEach { collection.updateSubscription(it.key, it.value!!.id) }
-        .also { println("Created ${it.size.ansiBold} subscriptions found in DB but not reported by Twitch") }
+        .also { logger.info("Created ${it.size.ansiBold} subscriptions found in DB but not reported by Twitch") }
 
     // store subscriptions that were reported by Twitch but weren't in the DB
     val storedSubscriptions = collection.find(Document("client_id", twitchClient.clientID.value))
@@ -97,7 +101,7 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
     twitchSubscriptions.values
         .filter { it.id !in storedSubscriptions }
         .onEach { collection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it) }
-        .also { println("Stored ${it.size.ansiBold} subscriptions reported by Twitch but not in DB") }
+        .also { logger.info("Stored ${it.size.ansiBold} subscriptions reported by Twitch but not in DB") }
 }
 
 private fun CoroutineScope.watchNotificationCreation(
@@ -108,11 +112,10 @@ private fun CoroutineScope.watchNotificationCreation(
     notificationsCollection.watch(listOf(match(`in`("operationType", listOf("insert")))))
         .asFlow()
         .onEach { streamDocument ->
-            println("Creating subscription for streamer ID ")
             val fullDocument = streamDocument.fullDocument!!
 
             if (fullDocument.getString("client_id") != twitchClient.clientID.value) {
-                println("Received new notification request for different client ID")
+                logger.trace { "Received new notification request for different client ID" }
                 return@onEach
             }
             val streamerID = fullDocument.getString("streamer_id")
@@ -124,7 +127,7 @@ private fun CoroutineScope.watchNotificationCreation(
 
             // already have subscriptions for this user, return
             if (existing.any()) {
-                System.err.println("Attempted to create a subscription for a user we already have a subscription for (ID $streamerID)")
+                logger.warn("Attempted to create a subscription for a user we already have a subscription for (ID $streamerID)")
                 return@onEach
             }
 
@@ -136,8 +139,8 @@ private fun CoroutineScope.watchNotificationCreation(
                 subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
             } ?: return@onEach
 
-            println("Created subscription for ID $streamerID")
+            logger.debug("Created subscription for ID $streamerID")
         }
-        .catch { cause -> System.err.println("Exception in change stream watch: $cause") }
+        .catch { cause -> logger.warn("Exception in change stream watch: $cause") }
         .launchIn(this)
 }
