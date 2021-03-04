@@ -48,7 +48,7 @@ fun main() = runBlocking {
 
     println()
 
-    createHttpServer(twitchClient, config.aqmp)
+    createHttpServer(twitchClient, config.aqmp).start(wait = false)
 
     // synchronize subscriptions between DB and twitch
     val collection = database.getCollection(config.mongo.collections.subscriptions)
@@ -108,9 +108,11 @@ private fun CoroutineScope.watchNotificationCreation(
     notificationsCollection.watch(listOf(match(`in`("operationType", listOf("insert")))))
         .asFlow()
         .onEach { streamDocument ->
+            println("Creating subscription for streamer ID ")
             val fullDocument = streamDocument.fullDocument!!
 
             if (fullDocument.getString("client_id") != twitchClient.clientID.value) {
+                println("Received new notification request for different client ID")
                 return@onEach
             }
             val streamerID = fullDocument.getString("streamer_id")
@@ -121,7 +123,10 @@ private fun CoroutineScope.watchNotificationCreation(
             })
 
             // already have subscriptions for this user, return
-            if (existing.any()) return@onEach
+            if (existing.any()) {
+                System.err.println("Attempted to create a subscription for a user we already have a subscription for (ID $streamerID)")
+                return@onEach
+            }
 
             twitchClient.createSubscription(streamerID, "stream.online")?.let {
                 subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
@@ -130,6 +135,8 @@ private fun CoroutineScope.watchNotificationCreation(
             twitchClient.createSubscription(streamerID, "stream.offline")?.let {
                 subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
             } ?: return@onEach
+
+            println("Created subscription for ID $streamerID")
         }
         .catch { cause -> System.err.println("Exception in change stream watch: $cause") }
         .launchIn(this)

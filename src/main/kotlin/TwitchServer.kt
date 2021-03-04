@@ -9,7 +9,6 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.util.pipeline.*
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -31,16 +30,19 @@ fun createHttpServer(twitchClient: TwitchClient, aqmpConfig: AppConfig.Aqmp): Ne
 
                 val secretKey = SecretKeySpec(TEMP_SECRET.encodeToByteArray(), "HmacSHA256")
                 val hMacSHA256 = Mac.getInstance("HmacSHA256").apply { init(secretKey) }
-                val expectedSignatureHeader = "sha256=" + hMacSHA256.doFinal(hmacMessage.encodeToByteArray()).toHexString()
-
+                val expectedSignatureHeader =
+                    "sha256=" + hMacSHA256.doFinal(hmacMessage.encodeToByteArray()).toHexString()
                 val actualSignatureHeader = call.request.header("Twitch-Eventsub-Message-Signature")
-                println("Expected signature header: $expectedSignatureHeader")
-                println("Actual signature header:   $actualSignatureHeader")
 
-                when (call.request.header("Twitch-Eventsub-Message-Type")) {
+                if (expectedSignatureHeader != actualSignatureHeader) {
+                    System.err.println("Received request to webhooks/callback that failed verification")
+                    System.err.println("Expected signature header: $expectedSignatureHeader")
+                    System.err.println("Actual signature header:   $actualSignatureHeader")
+                    call.respond(HttpStatusCode.Unauthorized)
+                } else when (call.request.header("Twitch-Eventsub-Message-Type")) {
                     "webhook_callback_verification" -> {
                         println("VERIFICATION BODY TEXT: $text")
-                        val verificationBody = Json.decodeFromString<CallbackVerificationBody>(text)
+                        val verificationBody = Json.safeDecodeFromString<CallbackVerificationBody>(text)
                         call.respond(verificationBody.challenge)
                         twitchClient.verifyCallback()
                     }
@@ -55,7 +57,8 @@ fun createHttpServer(twitchClient: TwitchClient, aqmpConfig: AppConfig.Aqmp): Ne
 }
 
 private fun PipelineContext<Unit, ApplicationCall>.handleNotification(sender: AqmpSender?, text: String) {
-    val notification = Json.decodeFromString<TwitchNotification>(text)
+    println("Received notification")
+    val notification: TwitchNotification = Json.safeDecodeFromString(text)
 
     when (val subType = call.request.header("Twitch-Eventsub-Subscription-Type")) {
         "stream.online" -> {
@@ -63,15 +66,15 @@ private fun PipelineContext<Unit, ApplicationCall>.handleNotification(sender: Aq
 
             if (eventData.type == "live") {
                 sender?.sendOnlineEvent(eventData.id, eventData.broadcaster_user_id)
+                println("Online event received for user ${eventData.broadcaster_user_name}")
             }
         }
         "stream.offline" -> {
             val eventData = Json.decodeFromJsonElement<TwitchEvent.StreamOffline>(notification.event)
             sender?.sendOfflineEvent(eventData.broadcaster_user_id)
+            println("Offline event received for user ${eventData.broadcaster_user_name}")
         }
-        else -> {
-            System.err.println("Received notification for subscription type $subType, ignoring")
-        }
+        else -> System.err.println("Received notification for subscription type $subType, ignoring")
     }
 }
 
@@ -102,4 +105,3 @@ class CallbackVerificationBody(val challenge: String, val subscription: Subscrip
 
 @OptIn(ExperimentalUnsignedTypes::class) // just to make it clear that the experimental unsigned types are used
 private fun ByteArray.toHexString() = asUByteArray().joinToString("") { it.toString(16).padStart(2, '0') }
-

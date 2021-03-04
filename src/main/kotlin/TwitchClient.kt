@@ -3,12 +3,12 @@ package io.streamcord.webhooks.server
 import io.ktor.client.*
 import io.ktor.client.engine.java.*
 import io.ktor.client.features.*
+import io.ktor.client.features.logging.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -18,11 +18,13 @@ class TwitchClient private constructor(
     val clientID: ClientID, private val clientSecret: ClientSecret, private val callbackUri: String,
     private var accessTokenInfo: ResponseBody.AppAccessToken
 ) {
-    private val httpClient = HttpClient(Java)
-    private val callbackVerification = CompletableDeferred<Unit>()
+    private val httpClient = HttpClient(Java) {
+        install(Logging)
+    }
+    private val callbackVerifications = CompletableDeferred<Unit>()
     private var awaitingToken: CompletableDeferred<Unit>? = null
 
-    fun verifyCallback() = callbackVerification.complete(Unit)
+    fun verifyCallback() = callbackVerifications.complete(Unit)
 
     suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
         awaitingToken?.await()
@@ -42,19 +44,20 @@ class TwitchClient private constructor(
             exitProcess(3)
         }
 
-        return Json.decodeFromString<ResponseBody.GetSubs>(response.readText()).data
+        return Json.safeDecodeFromString<ResponseBody.GetSubs>(response.readText()).data
     }
 
     suspend fun createSubscription(userID: String, type: String): SubscriptionData? {
         awaitingToken?.await()
 
         val condition = RequestBody.CreateSub.Condition(userID)
-        val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri", "bingusbingus")
+        val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri", TEMP_SECRET)
 
         val response = httpClient.post<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
             header("Content-Type", "application/json")
             body = Json.encodeToString(RequestBody.CreateSub(type, "1", condition, transport))
+            println(body)
         }
 
         // if unauthorized, get a new access token and store it, then rerun the request
@@ -67,8 +70,8 @@ class TwitchClient private constructor(
             System.err.println("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
             null
         } else {
-            callbackVerification.await()
-            Json.decodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
+            callbackVerifications.await()
+            Json.safeDecodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
         }
     }
 
@@ -133,7 +136,7 @@ class TwitchClient private constructor(
                 exitProcess(2)
             }
 
-            return Json.decodeFromString(response.readText())
+            return Json.safeDecodeFromString(response.readText())
         }
     }
 }
@@ -152,10 +155,20 @@ object ResponseBody {
     )
 
     @Serializable
-    data class GetSubs(val total: Int, val limit: Int, val data: List<SubscriptionData>, val pagination: JsonObject)
+    data class GetSubs(
+        val total: Int, val data: List<SubscriptionData>,
+        val limit: Int, val max_total_cost: Int, val total_cost: Int,
+        val pagination: JsonObject
+    )
 
     @Serializable
-    data class CreateSub(val data: List<SubscriptionData>, val limit: Int, val total: Int)
+    data class CreateSub(
+        val data: List<SubscriptionData>,
+        val limit: Int,
+        val total: Int,
+        val max_total_cost: Int,
+        val total_cost: Int
+    )
 }
 
 private object RequestBody {
@@ -174,7 +187,8 @@ data class SubscriptionData(
     val id: String, val status: String, val type: String, val version: String,
     val condition: Condition,
     val created_at: String,
-    val transport: Transport
+    val transport: Transport,
+    val cost: Int? = null
 ) {
     @Serializable
     data class Condition(val broadcaster_user_id: String)
