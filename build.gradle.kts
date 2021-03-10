@@ -9,6 +9,7 @@ plugins {
 }
 
 group = "io.streamcord"
+version = "indev"
 
 repositories {
     mavenCentral()
