@@ -1,4 +1,4 @@
-package io.streamcord.webhooks.server
+package io.streamcord.spyglass
 
 import com.rabbitmq.client.Channel
 import com.rabbitmq.client.ConnectionFactory

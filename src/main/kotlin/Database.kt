@@ -1,4 +1,4 @@
-package io.streamcord.webhooks.server
+package io.streamcord.spyglass
 
 import com.mongodb.client.MongoCollection
 import org.bson.Document

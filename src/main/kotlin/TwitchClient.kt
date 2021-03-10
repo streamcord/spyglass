@@ -1,4 +1,4 @@
-package io.streamcord.webhooks.server
+package io.streamcord.spyglass
 
 import io.ktor.client.*
 import io.ktor.client.engine.java.*

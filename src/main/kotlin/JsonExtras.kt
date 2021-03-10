@@ -1,4 +1,4 @@
-package io.streamcord.webhooks.server
+package io.streamcord.spyglass
 
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
