@@ -3,7 +3,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
     kotlin("jvm") version "1.4.31"
     kotlin("plugin.serialization") version "1.4.31"
-    id("com.github.ben-manes.versions") version "0.36.0"
+    id("com.github.ben-manes.versions") version "0.38.0"
     id("com.github.johnrengelman.shadow") version "6.1.0"
     application
 }
@@ -34,7 +34,7 @@ dependencies {
     implementation("com.rabbitmq", "amqp-client", "5.11.0")
 
     // Logging
-    implementation("io.github.microutils", "kotlin-logging", "2.0.4")
+    implementation("io.github.microutils", "kotlin-logging", "2.0.6")
 
     // Tests
     testImplementation(kotlin("test-junit5"))
