@@ -37,7 +37,13 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
                 val verificationBody = Json.safeDecodeFromString<CallbackVerificationBody>(text)
 
                 if (verifyRequest(subscriptions, verificationBody.subscription.id, text)) {
-                    call.respond(HttpStatusCode.Accepted, verificationBody.challenge)
+                    subscriptions.verifySubscription(verificationBody.subscription.id)?.let {
+                        call.respond(HttpStatusCode.Accepted, verificationBody.challenge)
+                        logger.info("Verified subscription with ID ${verificationBody.subscription.id}")
+                    } ?: run {
+                        // we don't have that subscription in the DB, so we can't verify it
+                        call.respond(HttpStatusCode.NotFound)
+                    }
                 } else {
                     call.respond(HttpStatusCode.Unauthorized)
                 }

@@ -51,7 +51,7 @@ class TwitchClient private constructor(
 
         val response = httpClient.post<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
-            header("Content-Type", "application/json")
+            contentType(ContentType.Application.Json)
             body = Json.encodeToString(RequestBody.CreateSub(type, "1", condition, transport))
             println(body)
         }

@@ -2,6 +2,9 @@ package io.streamcord.spyglass
 
 import com.mongodb.client.MongoCollection
 import org.bson.Document
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 fun MongoCollection<Document>.insertSubscription(clientID: String, secret: String, data: SubscriptionData) {
     insertOne(document {
@@ -22,9 +25,14 @@ fun MongoCollection<Document>.updateSubscription(original: Document, newSubID: S
     updateOne(original, setValues("sub_id" to newSubID, "verified" to false, "verified_at" to null))
 }
 
+fun MongoCollection<Document>.verifySubscription(subID: String) : Document? {
+    val currentTimestamp = ZonedDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT)
+    return findOneAndUpdate(Document("sub_id", subID), setValues("verified" to true, "verified_at" to currentTimestamp))
+}
+
 inline fun document(init: Document.() -> Unit) = Document().apply(init)
 
 private fun setValues(first: Pair<String, Any?>, vararg extra: Pair<String, Any?>) =
-    Document("\$set", Document(first.first, first.second).let { doc ->
-        extra.forEach { doc.append(it.first, it.second) }
+    Document("\$set", Document(first.first, first.second).apply {
+        extra.forEach { append(it.first, it.second) }
     })
