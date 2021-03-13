@@ -65,5 +65,5 @@ tasks {
 
 application {
     @Suppress("DEPRECATED") // this has to be used for the time being to avoid pissing off shadowJar
-    mainClassName = "io.streamcord.webhooks.server.AppKt"
+    mainClassName = "io.streamcord.spyglass.AppKt"
 }
