@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import mu.KotlinLogging
 import org.bson.Document
 import kotlin.random.Random
@@ -18,7 +19,7 @@ import kotlin.system.exitProcess
 internal val TEMP_SECRET = Random.nextBytes(16).decodeToString()
 internal val logger = KotlinLogging.logger {}
 
-suspend fun main() = coroutineScope {
+suspend fun main() = coroutineScope<Unit> {
     val config = loadConfig()
     logger.info("Config read. Starting up worker")
 
@@ -58,10 +59,51 @@ suspend fun main() = coroutineScope {
     syncSubscriptions(twitchClient, collection)
 
     val notificationsCollection = database.getCollection(config.mongo.collections.notifications)
-    watchNotificationCreation(twitchClient, notificationsCollection, collection)
-
     val notificationsDeletionQueue = database.getCollection(config.mongo.collections.notifications_deletion_queue)
-    watchNotificationDeletion(twitchClient, notificationsCollection, notificationsDeletionQueue, collection)
+
+    notificationsDeletionQueue.find(Document("client_id", clientID.value)).forEach {
+        maybeRemoveSubscriptions(it, twitchClient, notificationsCollection, notificationsDeletionQueue, collection)
+    }
+
+    notificationsDeletionQueue.watch(listOf(match(`in`("operationType", listOf("insert")))))
+        .asFlow()
+        .onEach { streamDocument ->
+            val fullDocument = streamDocument.fullDocument!!
+
+            maybeRemoveSubscriptions(
+                fullDocument,
+                twitchClient, notificationsCollection, notificationsDeletionQueue, collection
+            )
+        }.catch { cause -> logger.warn("Exception in deletion queue change stream watch: $cause") }
+        .launchIn(this)
+
+    collection.find(Document("client_id", clientID.value)).forEach {
+        val doc = document {
+            append("client_id", clientID.value)
+            append("streamer_id", it.getString("user_id"))
+        }
+        if (notificationsCollection.find(doc).none()) {
+            val subID = it.getString("sub_id")
+            logger.warn("Subscription with ID $subID has no associated notifications, attempting removal")
+            if (twitchClient.removeSubscription(subID)) {
+                collection.deleteOne(it)
+            }
+        }
+    }
+
+    notificationsCollection.find(Document("client_id", clientID.value)).forEach {
+        maybeCreateSubscriptions(it, twitchClient, collection)
+    }
+
+    notificationsCollection.watch(listOf(match(`in`("operationType", listOf("insert")))))
+        .asFlow()
+        .onEach { streamDocument ->
+            val fullDocument = streamDocument.fullDocument!!
+
+            maybeCreateSubscriptions(fullDocument, twitchClient, collection)
+        }
+        .catch { cause -> logger.warn("Exception in notifications change stream watch: $cause") }
+        .launchIn(this)
 }
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
@@ -107,81 +149,73 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
         .also { logger.info("Stored ${it.size.ansiBold} subscriptions reported by Twitch but not in DB") }
 }
 
-private fun CoroutineScope.watchNotificationCreation(
+fun CoroutineScope.maybeCreateSubscriptions(
+    document: Document,
     twitchClient: TwitchClient,
-    notificationsCollection: MongoCollection<Document>,
     subscriptionsCollection: MongoCollection<Document>
 ) {
-    notificationsCollection.watch(listOf(match(`in`("operationType", listOf("insert")))))
-        .asFlow()
-        .onEach { streamDocument ->
-            val fullDocument = streamDocument.fullDocument!!
+    if (document.getString("client_id") != twitchClient.clientID.value) {
+        logger.trace { "Received new notification request for different client ID" }
+        return
+    }
+    val streamerID = document.getString("streamer_id")
 
-            if (fullDocument.getString("client_id") != twitchClient.clientID.value) {
-                logger.trace { "Received new notification request for different client ID" }
-                return@onEach
-            }
-            val streamerID = fullDocument.getString("streamer_id")
+    val existing = subscriptionsCollection.find(document {
+        append("client_id", twitchClient.clientID.value)
+        append("user_id", streamerID)
+    })
 
-            val existing = subscriptionsCollection.find(document {
-                append("client_id", twitchClient.clientID.value)
-                append("user_id", streamerID)
-            })
-
-            listOf("stream.online", "stream.offline")
-                .filter { type -> existing.none { it.getString("type") == type } }
-                .forEach { type ->
-                    twitchClient.createSubscription(streamerID, type)?.let {
-                        subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
-                    }
-                    logger.info("Created subscription with type $type for user ID $streamerID")
+    launch {
+        listOf("stream.online", "stream.offline")
+            .filter { type -> existing.none { it.getString("type") == type } }
+            .forEach { type ->
+                twitchClient.createSubscription(streamerID, type)?.let {
+                    subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
                 }
-        }
-        .catch { cause -> logger.warn("Exception in notifications change stream watch: $cause") }
-        .launchIn(this)
+                logger.info("Created subscription with type $type for user ID $streamerID")
+            }
+    }
 }
 
-private fun CoroutineScope.watchNotificationDeletion(
+suspend fun maybeRemoveSubscriptions(
+    document: Document,
     twitchClient: TwitchClient,
     notificationsCollection: MongoCollection<Document>,
     notificationsDeletionQueue: MongoCollection<Document>,
     subscriptionsCollection: MongoCollection<Document>
 ) {
-    notificationsDeletionQueue.watch(listOf(match(`in`("operationType", listOf("insert")))))
-        .asFlow()
-        .onEach { streamDocument ->
-            val fullDocument = streamDocument.fullDocument!!
+    if (document.getString("client_id") != twitchClient.clientID.value) {
+        logger.trace { "Received new notification request for different client ID" }
+        return
+    }
 
-            if (fullDocument.getString("client_id") != twitchClient.clientID.value) {
-                println("wrong client")
-                return@onEach
-            }
-            val streamerID = fullDocument.getString("streamer_id")
-            val otherNotifications = notificationsCollection.find(Document("streamer_id", streamerID))
-                .filterNot { it["_id"].toString() == fullDocument["_id"].toString() }
+    val streamerID = document.getString("streamer_id")
+    val otherNotifications = notificationsCollection.find(Document("streamer_id", streamerID))
+        .filterNot { it["_id"].toString() == document["_id"].toString() }
 
-            if (otherNotifications.any()) {
-                // other notifications for this streamer still exist, so we don't need to delete the subscriptions
-                notificationsDeletionQueue.deleteOne(fullDocument)
-                return@onEach
-            }
+    if (otherNotifications.any()) {
+        // other notifications for this streamer still exist, so we don't need to delete the subscriptions
+        logger.info("Other notifications still exist for streamer ID $streamerID, not removing subscriptions")
+        notificationsDeletionQueue.deleteOne(document)
+        return
+    }
 
-            val existing = subscriptionsCollection.find(document {
-                append("client_id", twitchClient.clientID.value)
-                append("user_id", streamerID)
-            })
+    val existing = subscriptionsCollection.find(document {
+        append("client_id", twitchClient.clientID.value)
+        append("user_id", streamerID)
+    })
 
-            existing.forEach {
-                val subID = it.getString("sub_id")
-                if (!twitchClient.removeSubscription(subID)) {
-                    // failed to remove subscription, just exit. we'll try again later
-                    return@onEach
-                }
-                subscriptionsCollection.deleteOne(it)
-                logger.info("Removed subscription with ID $subID")
-            }
+    existing.forEach {
+        val subID = it.getString("sub_id")
+        if (!twitchClient.removeSubscription(subID)) {
+            // failed to remove subscription, just exit. we'll try again later
+            logger.warn("Failed to remove subscription with ID $subID")
+            return
+        }
+        subscriptionsCollection.deleteOne(it)
+        logger.info("Removed subscription with ID $subID")
+    }
 
-            notificationsDeletionQueue.deleteOne(fullDocument)
-        }.catch { cause -> logger.warn("Exception in deletion queue change stream watch: $cause") }
-        .launchIn(this)
+    notificationsCollection.deleteOne(document)
+    notificationsDeletionQueue.deleteOne(document)
 }

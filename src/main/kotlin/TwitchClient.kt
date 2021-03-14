@@ -30,17 +30,17 @@ class TwitchClient private constructor(
         }
 
         // if unauthorized, get a new access token and store it, then rerun the request
-        if (response.status == HttpStatusCode.Unauthorized) {
-            refetchToken()
-            return fetchExistingSubscriptions()
+        return when {
+            response.status == HttpStatusCode.Unauthorized -> {
+                refetchToken()
+                fetchExistingSubscriptions()
+            }
+            !response.status.isSuccess() -> {
+                logger.error("Failed to fetch subscriptions from Twitch. Error ${response.status}")
+                exitProcess(3)
+            }
+            else -> Json.safeDecodeFromString<ResponseBody.GetSubs>(response.readText()).data
         }
-
-        if (!response.status.isSuccess()) {
-            logger.error("Failed to fetch subscriptions from Twitch. Error ${response.status}")
-            exitProcess(3)
-        }
-
-        return Json.safeDecodeFromString<ResponseBody.GetSubs>(response.readText()).data
     }
 
     suspend fun createSubscription(userID: String, type: String): SubscriptionData? {
@@ -56,16 +56,18 @@ class TwitchClient private constructor(
         }
 
         // if unauthorized, get a new access token and store it, then rerun the request
-        if (response.status == HttpStatusCode.Unauthorized) {
-            refetchToken()
-            return createSubscription(userID, type)
-        }
-
-        return if (!response.status.isSuccess()) {
-            logger.error("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
-            null
-        } else {
-            Json.safeDecodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
+        return when {
+            response.status == HttpStatusCode.Unauthorized -> {
+                refetchToken()
+                createSubscription(userID, type)
+            }
+            !response.status.isSuccess() -> {
+                logger.error("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
+                null
+            }
+            else -> {
+                Json.safeDecodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
+            }
         }
     }
 
@@ -78,13 +80,16 @@ class TwitchClient private constructor(
         }
 
         // if unauthorized, get a new access token and store it, then rerun the request
-        if (response.status == HttpStatusCode.Unauthorized) {
-            refetchToken()
-            return removeSubscription(subID)
-        }
-
-        return response.status.isSuccess().also {
-            if (!it) logger.error("Failed to delete subscription with ID $subID. Error ${response.readText()}")
+        return when {
+            response.status == HttpStatusCode.Unauthorized -> {
+                refetchToken()
+                removeSubscription(subID)
+            }
+            !response.status.isSuccess() -> {
+                logger.error("Failed to delete subscription with ID $subID. Error ${response.readText()}")
+                false
+            }
+            else -> true
         }
     }
 
