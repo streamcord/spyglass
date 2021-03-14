@@ -36,7 +36,7 @@ class TwitchClient private constructor(
         }
 
         if (!response.status.isSuccess()) {
-            System.err.println("Failed to fetch subscriptions from Twitch. Error ${response.status}")
+            logger.error("Failed to fetch subscriptions from Twitch. Error ${response.status}")
             exitProcess(3)
         }
 
@@ -53,7 +53,6 @@ class TwitchClient private constructor(
             withDefaults()
             contentType(ContentType.Application.Json)
             body = Json.encodeToString(RequestBody.CreateSub(type, "1", condition, transport))
-            println(body)
         }
 
         // if unauthorized, get a new access token and store it, then rerun the request
@@ -70,7 +69,7 @@ class TwitchClient private constructor(
         }
     }
 
-    suspend fun removeSubscription(subID: String) {
+    suspend fun removeSubscription(subID: String): Boolean {
         awaitingToken?.await()
 
         val response = httpClient.delete<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
@@ -84,9 +83,9 @@ class TwitchClient private constructor(
             return removeSubscription(subID)
         }
 
-        if (!response.status.isSuccess()) {
-            System.err.println("Failed to delete subscription with ID $subID. Error ${response.readText()}")
-        } else Unit
+        return response.status.isSuccess().also {
+            if (!it) logger.error("Failed to delete subscription with ID $subID. Error ${response.readText()}")
+        }
     }
 
     private fun HttpRequestBuilder.withDefaults() {
@@ -101,7 +100,7 @@ class TwitchClient private constructor(
             return
         }
 
-        println("Encountered 401 Unauthorized from Twitch, fetching new access token...")
+        logger.warn("Encountered 401 Unauthorized from Twitch, fetching new access token...")
         awaitingToken = CompletableDeferred()
         accessTokenInfo = httpClient.fetchAccessToken(clientID, clientSecret)
         awaitingToken?.complete(Unit)

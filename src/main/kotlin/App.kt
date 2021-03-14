@@ -5,11 +5,11 @@ import com.mongodb.client.MongoCollection
 import com.mongodb.client.model.Aggregates.match
 import com.mongodb.client.model.Filters.`in`
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.runBlocking
 import mu.KotlinLogging
 import org.bson.Document
 import kotlin.random.Random
@@ -18,7 +18,7 @@ import kotlin.system.exitProcess
 internal val TEMP_SECRET = Random.nextBytes(16).decodeToString()
 internal val logger = KotlinLogging.logger {}
 
-fun main() = runBlocking {
+suspend fun main() = coroutineScope {
     val config = loadConfig()
     logger.info("Config read. Starting up worker")
 
@@ -59,6 +59,9 @@ fun main() = runBlocking {
 
     val notificationsCollection = database.getCollection(config.mongo.collections.notifications)
     watchNotificationCreation(twitchClient, notificationsCollection, collection)
+
+    val notificationsDeletionQueue = database.getCollection(config.mongo.collections.notifications_deletion_queue)
+    watchNotificationDeletion(twitchClient, notificationsCollection, notificationsDeletionQueue, collection)
 }
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
@@ -125,22 +128,60 @@ private fun CoroutineScope.watchNotificationCreation(
                 append("user_id", streamerID)
             })
 
-            // already have subscriptions for this user, return
-            if (existing.any()) {
-                logger.warn("Attempted to create a subscription for a user we already have a subscription for (ID $streamerID)")
+            listOf("stream.online", "stream.offline")
+                .filter { type -> existing.none { it.getString("type") == type } }
+                .forEach { type ->
+                    twitchClient.createSubscription(streamerID, type)?.let {
+                        subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
+                    }
+                    logger.info("Created subscription with type $type for user ID $streamerID")
+                }
+        }
+        .catch { cause -> logger.warn("Exception in notifications change stream watch: $cause") }
+        .launchIn(this)
+}
+
+private fun CoroutineScope.watchNotificationDeletion(
+    twitchClient: TwitchClient,
+    notificationsCollection: MongoCollection<Document>,
+    notificationsDeletionQueue: MongoCollection<Document>,
+    subscriptionsCollection: MongoCollection<Document>
+) {
+    notificationsDeletionQueue.watch(listOf(match(`in`("operationType", listOf("insert")))))
+        .asFlow()
+        .onEach { streamDocument ->
+            val fullDocument = streamDocument.fullDocument!!
+
+            if (fullDocument.getString("client_id") != twitchClient.clientID.value) {
+                println("wrong client")
+                return@onEach
+            }
+            val streamerID = fullDocument.getString("streamer_id")
+            val otherNotifications = notificationsCollection.find(Document("streamer_id", streamerID))
+                .filterNot { it["_id"].toString() == fullDocument["_id"].toString() }
+
+            if (otherNotifications.any()) {
+                // other notifications for this streamer still exist, so we don't need to delete the subscriptions
+                notificationsDeletionQueue.deleteOne(fullDocument)
                 return@onEach
             }
 
-            twitchClient.createSubscription(streamerID, "stream.online")?.let {
-                subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
-            } ?: return@onEach
+            val existing = subscriptionsCollection.find(document {
+                append("client_id", twitchClient.clientID.value)
+                append("user_id", streamerID)
+            })
 
-            twitchClient.createSubscription(streamerID, "stream.offline")?.let {
-                subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
-            } ?: return@onEach
+            existing.forEach {
+                val subID = it.getString("sub_id")
+                if (!twitchClient.removeSubscription(subID)) {
+                    // failed to remove subscription, just exit. we'll try again later
+                    return@onEach
+                }
+                subscriptionsCollection.deleteOne(it)
+                logger.info("Removed subscription with ID $subID")
+            }
 
-            logger.debug("Created subscription for ID $streamerID")
-        }
-        .catch { cause -> logger.warn("Exception in change stream watch: $cause") }
+            notificationsDeletionQueue.deleteOne(fullDocument)
+        }.catch { cause -> logger.warn("Exception in deletion queue change stream watch: $cause") }
         .launchIn(this)
 }
