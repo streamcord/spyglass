@@ -6,8 +6,8 @@ import io.ktor.http.*
 import io.ktor.request.*
 import io.ktor.response.*
 import io.ktor.routing.*
+import io.ktor.server.cio.*
 import io.ktor.server.engine.*
-import io.ktor.server.netty.*
 import io.ktor.util.pipeline.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -18,7 +18,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 class TwitchServer(private val subscriptions: MongoCollection<Document>, private val sender: Sender) {
-    private val httpServer = embeddedServer(Netty, port = 8080) {
+    private val httpServer = embeddedServer(CIO, port = 8080) {
         routing {
             post("webhooks/callback") {
                 logger.trace("Request received")

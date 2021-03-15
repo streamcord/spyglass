@@ -17,12 +17,11 @@ repositories {
 
 dependencies {
     // HTTP Server
-    implementation("io.ktor", "ktor-server-netty", "1.5.2")
+    implementation("io.ktor", "ktor-server-cio", "1.5.2")
     implementation("org.slf4j", "slf4j-simple", "2.0.0-alpha1")
 
     // HTTP Client
     implementation("io.ktor", "ktor-client-java", "1.5.2")
-    implementation("io.ktor", "ktor-client-logging", "1.5.2")
 
     // Serialization
     implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.1.0")
@@ -59,7 +58,9 @@ tasks {
     }
 
     shadowJar {
-        // minimize() // remove unused symbols from the fat JAR
+        minimize {
+            exclude(dependency("org.slf4j:.*:.*"))
+        } // remove unused symbols from the fat JAR
     }
 }
 
