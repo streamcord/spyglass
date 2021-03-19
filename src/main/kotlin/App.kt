@@ -20,31 +20,22 @@ internal val TEMP_SECRET = Random.nextBytes(16).decodeToString()
 internal val logger = KotlinLogging.logger {}
 
 suspend fun main() = coroutineScope<Unit> {
+    val workerIndex = System.getenv("SPYGLASS_WORKER_INDEX")?.toIntOrNull()
+        ?: noEnv("No valid worker index found. Populate env variable SPYGLASS_WORKER_INDEX with the worker index.")
+
+    val workerTotal = System.getenv("SPYGLASS_WORKER_TOTAL")?.toIntOrNull()
+        ?: noEnv("No valid worker total found. Populate env variable SPYGLASS_WORKER_TOTAL with the total number of workers.")
+
     val config = loadConfig()
     logger.info("Config read. Starting up worker")
+    val clientID = ClientID(config.twitch.client_id)
+    val clientSecret = ClientSecret(config.twitch.client_secret)
+    val callbackUri = "$workerIndex.${config.twitch.base_callback}"
 
-    val clientID = System.getenv("SPYGLASS_CLIENT_ID")?.let { ClientID(it) }
-        ?: noEnv("No client ID found. Populate env variable SPYGLASS_CLIENT_ID with the desired Twitch client ID.")
-
-    val clientSecret = System.getenv("SPYGLASS_CLIENT_SECRET")?.let { ClientSecret(it) }
-        ?: noEnv("No client secret found. Populate env variable SPYGLASS_CLIENT_SECRET with the desired Twitch client secret.")
-
-    val callbackUri = System.getenv("SPYGLASS_WEBHOOK_CALLBACK")
-        ?: noEnv("No webhook callback found. Populate env variable SPYGLASS_WEBHOOK_CALLBACK with the desired callback URI.")
-
-    logger.info("Starting worker with client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri}")
+    logger.info("Starting worker $workerIndex of $workerTotal with client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri.ansiBold}")
 
     val mongoClient = MongoClients.create(config.mongo.connection)
     val database = mongoClient.getDatabase(config.mongo.database)
-
-    // add worker to worker slot
-    val workersCollection = database.getCollection(config.mongo.collections.workers)
-    workersCollection.insertOne(Document("client_id", clientID.value).append("callback", callbackUri))
-
-    // remove this worker from the collection on exit
-    Runtime.getRuntime().addShutdownHook(Thread {
-        workersCollection.deleteOne(Document("client_id", clientID.value))
-    })
 
     val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret, callbackUri)
     logger.debug("Created Twitch client with new access token. Expires in $expiresIn seconds")

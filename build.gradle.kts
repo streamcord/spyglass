@@ -59,7 +59,7 @@ tasks {
 
     shadowJar {
         minimize {
-            exclude(dependency("org.slf4j:.*:.*"))
+            exclude(dependency("org.slf4j:slf4j-simple:.*"))
         } // remove unused symbols from the fat JAR
     }
 }

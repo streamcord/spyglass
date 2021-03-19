@@ -47,7 +47,7 @@ class TwitchClient private constructor(
         awaitingToken?.await()
 
         val condition = RequestBody.CreateSub.Condition(userID)
-        val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri", TEMP_SECRET)
+        val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri/webhooks/callback", TEMP_SECRET)
 
         val response = httpClient.post<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
