@@ -42,7 +42,7 @@ class TwitchClient private constructor(
         }
     }
 
-    suspend fun createSubscription(userID: String, type: String): SubscriptionData? {
+    suspend fun createSubscription(userID: Long, type: String): SubscriptionData? {
         awaitingToken?.await()
 
         val condition = RequestBody.CreateSub.Condition(userID)
@@ -64,9 +64,7 @@ class TwitchClient private constructor(
                 logger.error("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
                 null
             }
-            else -> {
-                Json.safeDecodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
-            }
+            else -> Json.safeDecodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
         }
     }
 
@@ -155,18 +153,18 @@ object ResponseBody {
 
     @Serializable
     data class GetSubs(
-        val total: Int, val data: List<SubscriptionData>,
-        val limit: Int, val max_total_cost: Int, val total_cost: Int,
+        val total: Long, val data: List<SubscriptionData>,
+        val limit: Long, val max_total_cost: Long, val total_cost: Long,
         val pagination: JsonObject
     )
 
     @Serializable
     data class CreateSub(
         val data: List<SubscriptionData>,
-        val limit: Int,
-        val total: Int,
-        val max_total_cost: Int,
-        val total_cost: Int
+        val limit: Long,
+        val total: Long,
+        val max_total_cost: Long,
+        val total_cost: Long
     )
 }
 
@@ -174,7 +172,7 @@ private object RequestBody {
     @Serializable
     data class CreateSub(val type: String, val version: String, val condition: Condition, val transport: Transport) {
         @Serializable
-        data class Condition(val broadcaster_user_id: String)
+        data class Condition(val broadcaster_user_id: Long)
 
         @Serializable
         data class Transport(val method: String, val callback: String, val secret: String)
@@ -190,7 +188,7 @@ data class SubscriptionData(
     val cost: Int? = null
 ) {
     @Serializable
-    data class Condition(val broadcaster_user_id: String)
+    data class Condition(val broadcaster_user_id: Long)
 
     @Serializable
     data class Transport(val method: String, val callback: String)
