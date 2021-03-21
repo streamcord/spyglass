@@ -7,6 +7,7 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -17,12 +18,9 @@ class TwitchClient private constructor(
     val clientID: ClientID, private val clientSecret: ClientSecret, private val callbackUri: String,
     private var accessTokenInfo: ResponseBody.AppAccessToken
 ) {
-    private val httpClient = HttpClient(Java) {
-        // install(Logging)
-    }
     private var awaitingToken: CompletableDeferred<Unit>? = null
 
-    suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
+    tailrec suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
         awaitingToken?.await()
 
         val response = httpClient.get<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
@@ -36,8 +34,9 @@ class TwitchClient private constructor(
                 fetchExistingSubscriptions()
             }
             !response.status.isSuccess() -> {
-                logger.error("Failed to fetch subscriptions from Twitch. Error ${response.status}")
-                exitProcess(3)
+                logger.error("Failed to fetch subscriptions from Twitch. Error ${response.status}. Attempting refetch in 30 seconds")
+                delay(30)
+                fetchExistingSubscriptions()
             }
             else -> Json.safeDecodeFromString<ResponseBody.GetSubs>(response.readText()).data
         }
@@ -113,11 +112,12 @@ class TwitchClient private constructor(
     }
 
     companion object {
-        suspend fun create(id: ClientID, secret: ClientSecret, callbackUri: String): Pair<TwitchClient, Long> =
-            HttpClient(Java).use { httpClient ->
-                val accessTokenInfo: ResponseBody.AppAccessToken = httpClient.fetchAccessToken(id, secret)
-                TwitchClient(id, secret, callbackUri, accessTokenInfo) to accessTokenInfo.expires_in
-            }
+        private val httpClient: HttpClient by lazy { HttpClient(Java) }
+
+        suspend fun create(id: ClientID, secret: ClientSecret, callbackUri: String): Pair<TwitchClient, Long> {
+            val accessTokenInfo: ResponseBody.AppAccessToken = httpClient.fetchAccessToken(id, secret)
+            return TwitchClient(id, secret, callbackUri, accessTokenInfo) to accessTokenInfo.expires_in
+        }
 
         private suspend fun HttpClient.fetchAccessToken(
             id: ClientID,
@@ -132,7 +132,7 @@ class TwitchClient private constructor(
 
             if (!response.status.isSuccess()) {
                 logger.error("Failed to fetch access token from Twitch. Error ${response.readText()}")
-                exitProcess(2)
+                exitProcess(ExitCodes.NO_TWITCH_ACCESS_TOKEN)
             }
 
             return Json.safeDecodeFromString(response.readText())
