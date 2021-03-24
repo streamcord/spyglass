@@ -127,8 +127,6 @@ private suspend fun syncSubscriptions(
         .forEach { replaceSubscription(it.value) }
 }
 
-private val subTypes = arrayOf("stream.online", "stream.offline")
-
 fun CoroutineScope.maybeCreateSubscriptions(
     document: Document,
     twitchClient: TwitchClient,
@@ -140,13 +138,21 @@ fun CoroutineScope.maybeCreateSubscriptions(
 
     val existing = subscriptions.find(Document("user_id", streamerID))
 
+    suspend fun createSubscription(type: String) {
+        val secret = generateSecret()
+        twitchClient.createSubscription(streamerID, type, secret)?.let {
+            subscriptions.insertSubscription(twitchClient.clientID, secret, it)
+            logger.info("Created subscription with type $type for user ID $streamerID")
+        }
+    }
+
     launch {
-        subTypes.filter { type -> existing.none { it.getString("type") == type } }.forEach { type ->
-            val secret = generateSecret()
-            twitchClient.createSubscription(streamerID, type, secret)?.let {
-                subscriptions.insertSubscription(twitchClient.clientID, secret, it)
-                logger.info("Created subscription with type $type for user ID $streamerID")
-            }
+        if (existing.none { it.getString("type") == "stream.online" }) {
+            createSubscription("stream.online")
+        }
+        val streamEndAction = document.getInteger("stream_end_action")
+        if (existing.none { it.getString("type") == "stream.offline" } && streamEndAction != 0 ) {
+            createSubscription("stream.offline")
         }
     }
 }
