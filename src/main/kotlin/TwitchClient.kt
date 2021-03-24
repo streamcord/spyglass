@@ -42,11 +42,11 @@ class TwitchClient private constructor(
         }
     }
 
-    suspend fun createSubscription(userID: Long, type: String): SubscriptionData? {
+    suspend fun createSubscription(userID: Long, type: String, secret: String): SubscriptionData? {
         awaitingToken?.await()
 
         val condition = RequestBody.CreateSub.Condition(userID.toString())
-        val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri/webhooks/callback", TEMP_SECRET)
+        val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri/webhooks/callback", secret)
 
         val response = httpClient.post<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
@@ -58,7 +58,7 @@ class TwitchClient private constructor(
         return when {
             response.status == HttpStatusCode.Unauthorized -> {
                 refetchToken()
-                createSubscription(userID, type)
+                createSubscription(userID, type, secret)
             }
             !response.status.isSuccess() -> {
                 logger.error("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")

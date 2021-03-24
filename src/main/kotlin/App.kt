@@ -9,11 +9,12 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.launch
 import mu.KotlinLogging
 import org.bson.Document
+import org.bson.internal.Base64
 import java.nio.ByteBuffer
 import kotlin.random.Random
 import kotlin.system.exitProcess
 
-internal val TEMP_SECRET = Random.nextBytes(16).decodeToString()
+private fun generateSecret() = Base64.encode(Random.nextBytes(32))
 internal val logger = KotlinLogging.logger {}
 
 suspend fun main() = coroutineScope<Unit> {
@@ -39,9 +40,7 @@ suspend fun main() = coroutineScope<Unit> {
     TwitchServer.create(database.subscriptions, config.aqmp).start()
 
     // synchronize subscriptions between DB and twitch
-    val totalSubscriptions = database.subscriptions.countDocuments(Document("client_id", clientID.value))
-    logger.debug("Found subscriptions in DB. Count: $totalSubscriptions")
-    syncSubscriptions(twitchClient, database.subscriptions)
+    syncSubscriptions(twitchClient, database.subscriptions) { it % workerTotal == workerIndex }
 
     // find subscriptions without an associated notification and remove them
     database.subscriptions.find().forEach {
@@ -60,11 +59,11 @@ suspend fun main() = coroutineScope<Unit> {
         maybeCreateSubscriptions(doc, twitchClient, database.subscriptions) { it % workerTotal == workerIndex }
     }
     database.notifications.find().forEach { processNotification(it) }
-    database.notifications.watch("insert", "delete") {
-        if (it.operationType == OperationType.INSERT) {
-            processNotification(it.fullDocument!!)
-        } else if (it.operationType == OperationType.DELETE) {
-            maybeRemoveSubscriptions(it, twitchClient, database) { it % workerTotal == workerIndex }
+    database.notifications.watch("insert", "delete") { doc ->
+        if (doc.operationType == OperationType.INSERT) {
+            processNotification(doc.fullDocument!!)
+        } else if (doc.operationType == OperationType.DELETE) {
+            maybeRemoveSubscriptions(doc, twitchClient, database) { it % workerTotal == workerIndex }
         }
     }.launchIn(this)
 }
@@ -81,35 +80,51 @@ private fun noEnv(message: String): Nothing {
  * in the database, they are added to the database. If any subscriptions are in the database that weren't reported by
  * Twitch, they are recreated and replaced in the database.
  */
-private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: MongoCollection<Document>) {
+private suspend fun syncSubscriptions(
+    twitchClient: TwitchClient,
+    collection: MongoCollection<Document>,
+    filter: (Long) -> Boolean
+) {
     val twitchSubscriptions = twitchClient.fetchExistingSubscriptions().associateBy { it.id }
     logger.info("Fetched existing subscriptions from Twitch. Count: ${twitchSubscriptions.size}")
 
-    // create new subscriptions for any found in DB that weren't reported by Twitch
-    collection.find()
-        .asSequence()
-        .filter { val subID = it.getString("sub_id"); subID != null && subID !in twitchSubscriptions }
-        .associateWith { twitchClient.createSubscription(it.getLong("user_id"), it.getString("type")!!) }
-        .filter {
-            val isNull = it.value == null
-            if (isNull) {
-                logger.warn("Failed to recreate missing subscription with sub ID ${it.key.getString("sub_id")}, deleting")
-                collection.deleteOne(it.key)
-            }
-
-            !isNull
-        }
-        .onEach { collection.updateSubscription(it.key, it.value!!.id) }
-        .also { logger.info("Created ${it.size.ansiBold} subscriptions found in DB but not reported by Twitch") }
-
-    // store subscriptions that were reported by Twitch but weren't in the DB
-    val storedSubscriptions = collection.find(Document("client_id", twitchClient.clientID.value))
+    val dbSubscriptions = collection.find()
+        .filter { filter(it.getLong("user_id")) }
         .associateBy { it.getString("sub_id") }
+    logger.info("Found existing subscriptions in DB. Count: ${dbSubscriptions.size}")
 
-    twitchSubscriptions.values
-        .filter { it.id !in storedSubscriptions }
-        .onEach { collection.insertSubscription(twitchClient.clientID, TEMP_SECRET, it) }
-        .also { logger.info("Stored ${it.size.ansiBold} subscriptions reported by Twitch but not in DB") }
+    class MissingSubscription(val userID: Long, val type: String)
+
+    val missingFromTwitch = dbSubscriptions
+        .filter { it.key !in twitchSubscriptions }
+        .mapValues {
+            val userID = it.value.getLong("user_id")
+            val type = it.value.getString("type")
+            MissingSubscription(userID, type)
+        }
+        .also { logger.info("Found ${it.size.ansiBold} subscriptions in DB that were not reported by Twitch") }
+
+    val missingFromDB = twitchSubscriptions
+        .filter { it.key !in dbSubscriptions }
+        .mapValues { MissingSubscription(it.value.condition.broadcaster_user_id, it.value.type) }
+        .also { logger.info("Received ${it.size.ansiBold} subscriptions from Twitch that were not in the DB") }
+
+    suspend fun replaceSubscription(sub: MissingSubscription) {
+        val secret = generateSecret()
+        twitchClient.createSubscription(sub.userID, sub.type, secret)?.let {
+            collection.insertSubscription(twitchClient.clientID, secret, it)
+            logger.info("Recreated missing subscription for user with ID ${sub.userID} and type ${sub.type}")
+        } ?: logger.warn("Failed to recreate missing subscription for user with ID ${sub.userID} and type ${sub.type}")
+    }
+
+    missingFromTwitch.forEach {
+        collection.findOneAndDelete(Document("sub_id", it.key))
+        replaceSubscription(it.value)
+    }
+
+    missingFromDB
+        .filter { twitchClient.removeSubscription(it.key) }
+        .forEach { replaceSubscription(it.value) }
 }
 
 private val subTypes = arrayOf("stream.online", "stream.offline")
@@ -127,8 +142,9 @@ fun CoroutineScope.maybeCreateSubscriptions(
 
     launch {
         subTypes.filter { type -> existing.none { it.getString("type") == type } }.forEach { type ->
-            twitchClient.createSubscription(streamerID, type)?.let {
-                subscriptions.insertSubscription(twitchClient.clientID, TEMP_SECRET, it)
+            val secret = generateSecret()
+            twitchClient.createSubscription(streamerID, type, secret)?.let {
+                subscriptions.insertSubscription(twitchClient.clientID, secret, it)
                 logger.info("Created subscription with type $type for user ID $streamerID")
             }
         }
