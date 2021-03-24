@@ -9,7 +9,6 @@ import kotlin.system.exitProcess
 class DatabaseController private constructor(
     val subscriptions: MongoCollection<Document>,
     val notifications: MongoCollection<Document>,
-    val notifsDeletionQueue: MongoCollection<Document>
 ) {
     companion object {
         fun create(config: AppConfig.Mongo): DatabaseController {
@@ -29,9 +28,8 @@ class DatabaseController private constructor(
 
             val subscriptions = database.tryGetCollection(config.collections.subscriptions)
             val notifications = database.tryGetCollection(config.collections.notifications)
-            val notifsDeletionQueue = database.tryGetCollection(config.collections.notifications_deletion_queue)
 
-            return DatabaseController(subscriptions, notifications, notifsDeletionQueue)
+            return DatabaseController(subscriptions, notifications)
         }
 
         private fun MongoDatabase.tryGetCollection(collectionName: String) = try {

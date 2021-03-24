@@ -25,7 +25,7 @@ dependencies {
 
     // Serialization
     implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.1.0")
-    implementation("com.charleskorn.kaml", "kaml", "0.28.3")
+    implementation("com.charleskorn.kaml", "kaml", "0.29.0")
 
     // DB
     implementation("org.mongodb", "mongodb-driver", "3.12.8")

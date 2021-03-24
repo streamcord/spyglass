@@ -1,18 +1,15 @@
 package io.streamcord.spyglass
 
-import com.mongodb.client.MongoClients
 import com.mongodb.client.MongoCollection
-import com.mongodb.client.model.Aggregates.match
-import com.mongodb.client.model.Filters.`in`
+import com.mongodb.client.model.changestream.ChangeStreamDocument
+import com.mongodb.client.model.changestream.OperationType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import mu.KotlinLogging
 import org.bson.Document
+import java.nio.ByteBuffer
 import kotlin.random.Random
 import kotlin.system.exitProcess
 
@@ -20,10 +17,10 @@ internal val TEMP_SECRET = Random.nextBytes(16).decodeToString()
 internal val logger = KotlinLogging.logger {}
 
 suspend fun main() = coroutineScope<Unit> {
-    val workerIndex = System.getenv("SPYGLASS_WORKER_INDEX")?.toIntOrNull()
+    val workerIndex = System.getenv("SPYGLASS_WORKER_INDEX")?.toLongOrNull()
         ?: noEnv("No valid worker index found. Populate env variable SPYGLASS_WORKER_INDEX with the worker index.")
 
-    val workerTotal = System.getenv("SPYGLASS_WORKER_TOTAL")?.toIntOrNull()
+    val workerTotal = System.getenv("SPYGLASS_WORKER_TOTAL")?.toLongOrNull()
         ?: noEnv("No valid worker total found. Populate env variable SPYGLASS_WORKER_TOTAL with the total number of workers.")
 
     val config = loadConfig()
@@ -34,67 +31,42 @@ suspend fun main() = coroutineScope<Unit> {
 
     logger.info("Starting worker $workerIndex of $workerTotal with client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri.ansiBold}")
 
-    val mongoClient = MongoClients.create(config.mongo.connection)
-    val database = mongoClient.getDatabase(config.mongo.database)
+    val database = DatabaseController.create(config.mongo)
 
     val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret, callbackUri)
     logger.debug("Created Twitch client with new access token. Expires in $expiresIn seconds")
 
-    val collection = database.getCollection(config.mongo.collections.subscriptions)
-    TwitchServer.create(collection, config.aqmp).start()
+    TwitchServer.create(database.subscriptions, config.aqmp).start()
 
     // synchronize subscriptions between DB and twitch
-    logger.debug(
-        "Found subscriptions in DB. Count: ${collection.countDocuments(Document("client_id", clientID.value))}"
-    )
-    syncSubscriptions(twitchClient, collection)
+    val totalSubscriptions = database.subscriptions.countDocuments(Document("client_id", clientID.value))
+    logger.debug("Found subscriptions in DB. Count: $totalSubscriptions")
+    syncSubscriptions(twitchClient, database.subscriptions)
 
-    val notificationsCollection = database.getCollection(config.mongo.collections.notifications)
-    val notificationsDeletionQueue = database.getCollection(config.mongo.collections.notifications_deletion_queue)
+    // find subscriptions without an associated notification and remove them
+    database.subscriptions.find().forEach {
+        val doc = Document("streamer_id", it.getLong("user_id").toString())
 
-    notificationsDeletionQueue.find(Document("client_id", clientID.value)).forEach {
-        maybeRemoveSubscriptions(it, twitchClient, notificationsCollection, notificationsDeletionQueue, collection)
-    }
-
-    notificationsDeletionQueue.watch(listOf(match(`in`("operationType", listOf("insert")))))
-        .asFlow()
-        .onEach { streamDocument ->
-            val fullDocument = streamDocument.fullDocument!!
-
-            maybeRemoveSubscriptions(
-                fullDocument,
-                twitchClient, notificationsCollection, notificationsDeletionQueue, collection
-            )
-        }.catch { cause -> logger.warn("Exception in deletion queue change stream watch: $cause") }
-        .launchIn(this)
-
-    collection.find(Document("client_id", clientID.value)).forEach {
-        val doc = document {
-            append("client_id", clientID.value)
-            append("streamer_id", it.getString("user_id"))
-        }
-        if (notificationsCollection.find(doc).none()) {
+        if (database.notifications.find(doc).none()) {
             val subID = it.getString("sub_id")
             logger.warn("Subscription with ID $subID has no associated notifications, attempting removal")
             if (twitchClient.removeSubscription(subID)) {
-                collection.deleteOne(it)
+                database.subscriptions.deleteOne(it)
             }
         }
     }
 
-    notificationsCollection.find(Document("client_id", clientID.value)).forEach {
-        maybeCreateSubscriptions(it, twitchClient, collection)
+    fun processNotification(doc: Document) {
+        maybeCreateSubscriptions(doc, twitchClient, database.subscriptions) { it % workerTotal == workerIndex }
     }
-
-    notificationsCollection.watch(listOf(match(`in`("operationType", listOf("insert")))))
-        .asFlow()
-        .onEach { streamDocument ->
-            val fullDocument = streamDocument.fullDocument!!
-
-            maybeCreateSubscriptions(fullDocument, twitchClient, collection)
+    database.notifications.find().forEach { processNotification(it) }
+    database.notifications.watch("insert", "delete") {
+        if (it.operationType == OperationType.INSERT) {
+            processNotification(it.fullDocument!!)
+        } else if (it.operationType == OperationType.DELETE) {
+            maybeRemoveSubscriptions(it, twitchClient, database) { it % workerTotal == workerIndex }
         }
-        .catch { cause -> logger.warn("Exception in notifications change stream watch: $cause") }
-        .launchIn(this)
+    }.launchIn(this)
 }
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
@@ -114,10 +86,10 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
     logger.info("Fetched existing subscriptions from Twitch. Count: ${twitchSubscriptions.size}")
 
     // create new subscriptions for any found in DB that weren't reported by Twitch
-    collection.find(Document("client_id", twitchClient.clientID.value))
+    collection.find()
         .asSequence()
         .filter { val subID = it.getString("sub_id"); subID != null && subID !in twitchSubscriptions }
-        .associateWith { twitchClient.createSubscription(it.getString("user_id"), it.getString("type")!!) }
+        .associateWith { twitchClient.createSubscription(it.getLong("user_id"), it.getString("type")!!) }
         .filter {
             val isNull = it.value == null
             if (isNull) {
@@ -136,77 +108,57 @@ private suspend fun syncSubscriptions(twitchClient: TwitchClient, collection: Mo
 
     twitchSubscriptions.values
         .filter { it.id !in storedSubscriptions }
-        .onEach { collection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it) }
+        .onEach { collection.insertSubscription(twitchClient.clientID, TEMP_SECRET, it) }
         .also { logger.info("Stored ${it.size.ansiBold} subscriptions reported by Twitch but not in DB") }
 }
+
+private val subTypes = arrayOf("stream.online", "stream.offline")
 
 fun CoroutineScope.maybeCreateSubscriptions(
     document: Document,
     twitchClient: TwitchClient,
-    subscriptionsCollection: MongoCollection<Document>
+    subscriptions: MongoCollection<Document>,
+    filter: (Long) -> Boolean
 ) {
-    if (document.getString("client_id") != twitchClient.clientID.value) {
-        logger.trace { "Received new notification request for different client ID" }
-        return
-    }
-    val streamerID = document.getString("streamer_id")
+    val streamerID = document.getString("streamer_id").toLong()
+    if (!filter(streamerID)) return
 
-    val existing = subscriptionsCollection.find(document {
-        append("client_id", twitchClient.clientID.value)
-        append("user_id", streamerID)
-    })
+    val existing = subscriptions.find(Document("user_id", streamerID))
 
     launch {
-        listOf("stream.online", "stream.offline")
-            .filter { type -> existing.none { it.getString("type") == type } }
-            .forEach { type ->
-                twitchClient.createSubscription(streamerID, type)?.let {
-                    subscriptionsCollection.insertSubscription(twitchClient.clientID.value, TEMP_SECRET, it)
-                }
+        subTypes.filter { type -> existing.none { it.getString("type") == type } }.forEach { type ->
+            twitchClient.createSubscription(streamerID, type)?.let {
+                subscriptions.insertSubscription(twitchClient.clientID, TEMP_SECRET, it)
                 logger.info("Created subscription with type $type for user ID $streamerID")
             }
+        }
     }
 }
 
 suspend fun maybeRemoveSubscriptions(
-    document: Document,
+    document: ChangeStreamDocument<Document>,
     twitchClient: TwitchClient,
-    notificationsCollection: MongoCollection<Document>,
-    notificationsDeletionQueue: MongoCollection<Document>,
-    subscriptionsCollection: MongoCollection<Document>
+    database: DatabaseController,
+    filter: (Long) -> Boolean
 ) {
-    if (document.getString("client_id") != twitchClient.clientID.value) {
-        logger.trace { "Received new notification request for different client ID" }
-        return
-    }
+    val streamerID = ByteBuffer.wrap(document.documentKey!!.getBinary("_id").data).long
+    if (!filter(streamerID)) return
 
-    val streamerID = document.getString("streamer_id")
-    val otherNotifications = notificationsCollection.find(Document("streamer_id", streamerID))
-        .filterNot { it["_id"].toString() == document["_id"].toString() }
-
+    val otherNotifications = database.notifications.find(Document("streamer_id", streamerID.toString()))
     if (otherNotifications.any()) {
         // other notifications for this streamer still exist, so we don't need to delete the subscriptions
         logger.info("Other notifications still exist for streamer ID $streamerID, not removing subscriptions")
-        notificationsDeletionQueue.deleteOne(document)
         return
     }
 
-    val existing = subscriptionsCollection.find(document {
-        append("client_id", twitchClient.clientID.value)
-        append("user_id", streamerID)
-    })
-
-    existing.forEach {
+    database.subscriptions.find(Document("user_id", streamerID)).forEach {
         val subID = it.getString("sub_id")
         if (!twitchClient.removeSubscription(subID)) {
             // failed to remove subscription, just exit. we'll try again later
             logger.warn("Failed to remove subscription with ID $subID")
             return
         }
-        subscriptionsCollection.deleteOne(it)
+        database.subscriptions.deleteOne(it)
         logger.info("Removed subscription with ID $subID")
     }
-
-    notificationsCollection.deleteOne(document)
-    notificationsDeletionQueue.deleteOne(document)
 }

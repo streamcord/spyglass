@@ -45,7 +45,7 @@ class TwitchClient private constructor(
     suspend fun createSubscription(userID: Long, type: String): SubscriptionData? {
         awaitingToken?.await()
 
-        val condition = RequestBody.CreateSub.Condition(userID)
+        val condition = RequestBody.CreateSub.Condition(userID.toString())
         val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri/webhooks/callback", TEMP_SECRET)
 
         val response = httpClient.post<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
@@ -172,7 +172,7 @@ private object RequestBody {
     @Serializable
     data class CreateSub(val type: String, val version: String, val condition: Condition, val transport: Transport) {
         @Serializable
-        data class Condition(val broadcaster_user_id: Long)
+        data class Condition(val broadcaster_user_id: String)
 
         @Serializable
         data class Transport(val method: String, val callback: String, val secret: String)
