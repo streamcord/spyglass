@@ -65,7 +65,7 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
                     logger.trace("Request verified, handling notification")
                     handleNotification(sender, notification)
                     subscriptions.updateSubscription(notification.subscription.id, messageID)
-                    call.respond(HttpStatusCode.Accepted)
+                    call.respond(HttpStatusCode.NoContent)
                 } else {
                     call.respond(HttpStatusCode.Unauthorized)
                 }
@@ -78,7 +78,7 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
                     subscriptions.revokeSubscription(subscription.id, timestamp, subscription.status)
                     subscriptions.updateSubscription(subscription.id, messageID)
-                    call.respond(HttpStatusCode.Accepted)
+                    call.respond(HttpStatusCode.NoContent)
                 } else {
                     call.respond(HttpStatusCode.Unauthorized)
                 }
