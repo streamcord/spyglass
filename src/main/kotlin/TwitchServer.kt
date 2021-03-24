@@ -35,6 +35,11 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
     }
 
     private suspend fun PipelineContext<Unit, ApplicationCall>.handleCallback(text: String) {
+        val messageID = call.request.header("Twitch-Eventsub-Message-Id") ?: run {
+            call.respond(HttpStatusCode.NotFound)
+            return
+        }
+
         when (call.request.header("Twitch-Eventsub-Message-Type")) {
             "webhook_callback_verification" -> {
                 val verificationBody = Json.safeDecodeFromString<CallbackVerificationBody>(text)
@@ -42,6 +47,7 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
                 if (verifyRequest(subscriptions, verificationBody.subscription.id, text)) {
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
                     subscriptions.verifySubscription(verificationBody.subscription.id, timestamp)?.let {
+                        subscriptions.updateSubscription(verificationBody.subscription.id, messageID)
                         call.respond(HttpStatusCode.Accepted, verificationBody.challenge)
                         logger.info("Verified subscription with ID ${verificationBody.subscription.id}")
                     } ?: run {
@@ -58,6 +64,7 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
                 if (verifyRequest(subscriptions, notification.subscription.id, text)) {
                     logger.trace("Request verified, handling notification")
                     handleNotification(sender, notification)
+                    subscriptions.updateSubscription(notification.subscription.id, messageID)
                     call.respond(HttpStatusCode.Accepted)
                 } else {
                     call.respond(HttpStatusCode.Unauthorized)
@@ -70,6 +77,7 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
                     logger.warn("Received revocation request from Twitch for subscription ID ${subscription.id}. Reason: ${subscription.status}")
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
                     subscriptions.revokeSubscription(subscription.id, timestamp, subscription.status)
+                    subscriptions.updateSubscription(subscription.id, messageID)
                     call.respond(HttpStatusCode.Accepted)
                 } else {
                     call.respond(HttpStatusCode.Unauthorized)

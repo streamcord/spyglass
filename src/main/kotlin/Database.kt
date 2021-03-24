@@ -35,6 +35,17 @@ fun MongoCollection<Document>.revokeSubscription(subID: String, timestamp: Strin
 fun MongoCollection<Document>.verifySubscription(subID: String, timestamp: String): Document? =
     findOneAndUpdate(Document("sub_id", subID), setValues("verified" to true, "verified_at" to timestamp))
 
+private const val MESSAGES_TO_STORE = 50
+fun MongoCollection<Document>.updateSubscription(subID: String, newMessageID: String): Document? =
+    find(Document("sub_id", subID)).firstOrNull()?.apply {
+        val deque = ArrayDeque<String>(getList("messages", String::class.java))
+        if (deque.size >= MESSAGES_TO_STORE) repeat(deque.size - MESSAGES_TO_STORE + 1) {
+            deque.removeLast()
+        }
+        deque.addFirst(newMessageID)
+        updateOne(this, setValues("messages" to deque.toList()))
+    }
+
 inline fun document(init: Document.() -> Unit) = Document().apply(init)
 
 private fun setValues(first: Pair<String, Any?>, vararg extra: Pair<String, Any?>) =
