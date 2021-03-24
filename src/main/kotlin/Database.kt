@@ -9,9 +9,6 @@ import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onEach
 import org.bson.Document
-import java.time.ZoneOffset
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 
 fun MongoCollection<Document>.insertSubscription(clientID: ClientID, secret: String, data: SubscriptionData) {
     insertOne(document {
@@ -28,14 +25,15 @@ fun MongoCollection<Document>.insertSubscription(clientID: ClientID, secret: Str
     })
 }
 
-fun MongoCollection<Document>.updateSubscription(original: Document, newSubID: String) {
-    updateOne(original, setValues("sub_id" to newSubID, "verified" to false, "verified_at" to null))
+fun MongoCollection<Document>.revokeSubscription(subID: String, timestamp: String, reason: String): Document? {
+    return findOneAndUpdate(
+        Document("sub_id", subID),
+        setValues("revoked" to true, "revoked_at" to timestamp, "revocation_reason" to reason)
+    )
 }
 
-fun MongoCollection<Document>.verifySubscription(subID: String): Document? {
-    val currentTimestamp = ZonedDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT)
-    return findOneAndUpdate(Document("sub_id", subID), setValues("verified" to true, "verified_at" to currentTimestamp))
-}
+fun MongoCollection<Document>.verifySubscription(subID: String, timestamp: String): Document? =
+    findOneAndUpdate(Document("sub_id", subID), setValues("verified" to true, "verified_at" to timestamp))
 
 inline fun document(init: Document.() -> Unit) = Document().apply(init)
 

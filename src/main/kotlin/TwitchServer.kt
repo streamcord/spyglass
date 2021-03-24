@@ -14,6 +14,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
 import org.bson.Document
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -37,7 +40,8 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
                 val verificationBody = Json.safeDecodeFromString<CallbackVerificationBody>(text)
 
                 if (verifyRequest(subscriptions, verificationBody.subscription.id, text)) {
-                    subscriptions.verifySubscription(verificationBody.subscription.id)?.let {
+                    val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
+                    subscriptions.verifySubscription(verificationBody.subscription.id, timestamp)?.let {
                         call.respond(HttpStatusCode.Accepted, verificationBody.challenge)
                         logger.info("Verified subscription with ID ${verificationBody.subscription.id}")
                     } ?: run {
@@ -59,6 +63,18 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
                     call.respond(HttpStatusCode.Unauthorized)
                 }
             }
+            "revocation" -> {
+                val subscription = Json.safeDecodeFromString<RevocationBody>(text).subscription
+
+                if (verifyRequest(subscriptions, subscription.id, text)) {
+                    logger.warn("Received revocation request from Twitch for subscription ID ${subscription.id}. Reason: ${subscription.status}")
+                    val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
+                    subscriptions.revokeSubscription(subscription.id, timestamp, subscription.status)
+                    call.respond(HttpStatusCode.Accepted)
+                } else {
+                    call.respond(HttpStatusCode.Unauthorized)
+                }
+            }
         }
     }
 
@@ -68,6 +84,8 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
 
             return TwitchServer(subsCollection, sender)
         }
+
+        private fun nowInUtc() = ZonedDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT)
     }
 }
 
@@ -145,6 +163,9 @@ private interface TwitchEvent {
 
 @Serializable
 class CallbackVerificationBody(val challenge: String, val subscription: SubscriptionData)
+
+@Serializable
+class RevocationBody(val subscription: SubscriptionData)
 
 @OptIn(ExperimentalUnsignedTypes::class) // just to make it clear that the experimental unsigned types are used
 private fun ByteArray.toHexString() = asUByteArray().joinToString("") { it.toString(16).padStart(2, '0') }
