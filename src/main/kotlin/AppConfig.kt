@@ -9,7 +9,7 @@ import kotlin.system.exitProcess
 private const val configName = "spyglass.yml"
 
 @Serializable
-class AppConfig(val mongo: Mongo, val twitch: Twitch, val aqmp: Aqmp) {
+class AppConfig(val mongo: Mongo, val twitch: Twitch, val amqp: Amqp) {
     @Serializable
     class Mongo(val connection: String, val database: String, val collections: Collections) {
         @Serializable
@@ -20,7 +20,7 @@ class AppConfig(val mongo: Mongo, val twitch: Twitch, val aqmp: Aqmp) {
     class Twitch(val client_id: String, val client_secret: String, val base_callback: String)
 
     @Serializable
-    class Aqmp(val connection: String, val queue: String)
+    class Amqp(val connection: String, val queue: String)
 }
 
 fun loadConfig(): AppConfig {
@@ -37,7 +37,7 @@ fun loadConfig(): AppConfig {
                         workers: <name of collection, e.g. "workers">
                         notifications: <name of collection, e.g. "notifications">
                 
-                aqmp:
+                amqp:
                     connection: <connection string, e.g. "localhost">
                     exchange: <exchange name, e.g. "amq.direct">
                     queue: <queue name, e.g. "events">

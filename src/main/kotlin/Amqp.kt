@@ -12,17 +12,17 @@ sealed interface Sender {
 
     fun sendOfflineEvent(userID: String, userName: String)
 
-    class Aqmp private constructor(private val queueName: String, private val channel: Channel) : Sender {
-        override fun sendOnlineEvent(streamID: String, userID: String, userName: String) = send(AqmpEvent.StreamOnline(streamID, userID))
+    class Amqp private constructor(private val queueName: String, private val channel: Channel) : Sender {
+        override fun sendOnlineEvent(streamID: String, userID: String, userName: String) = send(AmqpEvent.StreamOnline(streamID, userID))
 
-        override fun sendOfflineEvent(userID: String, userName: String) = send(AqmpEvent.StreamOffline(userID))
+        override fun sendOfflineEvent(userID: String, userName: String) = send(AmqpEvent.StreamOffline(userID))
 
         private inline fun <reified T> send(obj: T) = send(Json.encodeToString(obj))
 
         private fun send(text: String) = channel.basicPublish("", queueName, null, text.encodeToByteArray())
 
         companion object {
-            fun create(config: AppConfig.Aqmp): Aqmp? =
+            fun create(config: AppConfig.Amqp): Amqp? =
                 try {
                     val factory = ConnectionFactory().apply {
                         host = config.connection
@@ -33,9 +33,9 @@ sealed interface Sender {
                         queueDeclare(config.queue, false, false, false, null)
                     }
 
-                    Aqmp(config.queue, channel)
+                    Amqp(config.queue, channel)
                 } catch (ex: IOException) {
-                    logger.warn("Failed to establish AQMP queue due to ${ex.stackTraceToString()}")
+                    logger.warn("Failed to establish AMQP queue due to ${ex.stackTraceToString()}")
                     null
                 }
         }
@@ -52,16 +52,16 @@ sealed interface Sender {
     }
 }
 
-private sealed interface AqmpEvent {
+private sealed interface AmqpEvent {
     val op: Int
 
     @Serializable
-    data class StreamOnline(val streamId: String, val userID: String) : AqmpEvent {
+    data class StreamOnline(val streamId: String, val userID: String) : AmqpEvent {
         override val op = 1
     }
 
     @Serializable
-    data class StreamOffline(val userId: String) : AqmpEvent {
+    data class StreamOffline(val userId: String) : AmqpEvent {
         override val op = 2
     }
 }

@@ -87,8 +87,8 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
     }
 
     companion object {
-        fun create(subsCollection: MongoCollection<Document>, aqmpConfig: AppConfig.Aqmp): TwitchServer {
-            val sender = Sender.Logger ?: error("Failed to open AQMP sender")
+        fun create(subsCollection: MongoCollection<Document>, amqpConfig: AppConfig.Amqp): TwitchServer {
+            val sender = Sender.Logger ?: error("Failed to open AMQP sender")
 
             return TwitchServer(subsCollection, sender)
         }
