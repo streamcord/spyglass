@@ -24,7 +24,7 @@ This will create a file in the `build/libs` folder named `spyglass-indev-all.jar
 
 ## Setup
 
-Spyglass, in its current state, requires connection to both a MongoDB replica set and an AQMP client. Set both of these
+Spyglass, in its current state, requires connection to both a MongoDB replica set and an AMQP client. Set both of these
 up first, then proceed to the next step.
 
 Create a file in the same directory as the Spyglass jarfile named `spyglass.yml`. This file will contain the
@@ -43,7 +43,7 @@ twitch:
   client_secret: <Twitch client secret, e.g. "5j48e47jhzb55o7zainz7e7niist">
   base_callback: <Webhook callback URL for EventSub notifications, e.g. "eventsub.streamcord.io">
 
-aqmp:
+amqp:
   connection: <connection string, e.g. "localhost">
   queue: <queue name, e.g. "events">
 ```
