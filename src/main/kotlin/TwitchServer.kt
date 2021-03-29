@@ -19,6 +19,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlin.system.exitProcess
 
 class TwitchServer(private val subscriptions: MongoCollection<Document>, private val sender: Sender) {
     private val httpServer = embeddedServer(CIO, port = 8080) {
@@ -87,8 +88,8 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
     }
 
     companion object {
-        fun create(subsCollection: MongoCollection<Document>, amqpConfig: AppConfig.Amqp): TwitchServer {
-            val sender = Sender.Logger ?: error("Failed to open AMQP sender")
+        fun create(subsCollection: MongoCollection<Document>, aqmpConfig: AppConfig.Amqp): TwitchServer {
+            val sender = Sender.Amqp.create(aqmpConfig) ?: exitProcess(ExitCodes.AMQP_CONNECTION_FAILED)
 
             return TwitchServer(subsCollection, sender)
         }

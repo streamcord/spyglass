@@ -7,4 +7,5 @@ object ExitCodes {
     const val INVALID_DB_CONNECTION_STRING = 4
     const val INVALID_DB_NAME = 5
     const val INVALID_DB_COLLECTION_NAME = 6
+    const val AMQP_CONNECTION_FAILED = 7
 }
