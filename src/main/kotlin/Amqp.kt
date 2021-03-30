@@ -66,13 +66,13 @@ private sealed interface AmqpEvent {
     val op: Int
 
     @Serializable
-    data class StreamOnline(val streamId: String, val userID: String) : AmqpEvent {
+    data class StreamOnline(val streamID: String, val userID: String) : AmqpEvent {
         @Required
         override val op = 1
     }
 
     @Serializable
-    data class StreamOffline(val userId: String) : AmqpEvent {
+    data class StreamOffline(val userID: String) : AmqpEvent {
         @Required
         override val op = 2
     }
