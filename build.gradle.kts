@@ -51,6 +51,7 @@ tasks {
         kotlinOptions.jvmTarget = "11" // require Java 11 so we can use the built-in HttpClient
         kotlinOptions.useIR = true
         kotlinOptions.languageVersion = "1.5" // for sealed interfaces and value classes
+        kotlinOptions.freeCompilerArgs += "-Xallow-result-return-type"
     }
 
     withType<Test>().configureEach {

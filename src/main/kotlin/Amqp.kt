@@ -32,11 +32,11 @@ sealed interface Sender {
         }
 
         companion object {
-            fun create(config: AppConfig.Amqp): Amqp? = try {
+            fun create(config: AppConfig.Amqp): Result<Amqp> = try {
                 val factory = ConnectionFactory().apply {
                     host = config.connection
-                    username = "guest"
-                    password = "guest"
+                    username = config.authentication?.username
+                    password = config.authentication?.password
                 }
 
                 val connection = factory.newConnection()
@@ -44,10 +44,9 @@ sealed interface Sender {
                     queueDeclare(config.queue, true, false, false, null)
                 }
 
-                Amqp(config.queue, channel)
+                Result.success(Amqp(config.queue, channel))
             } catch (ex: Throwable) {
-                logger.error("Failed to establish AMQP queue due to exception", ex)
-                null
+                Result.failure(ex)
             }
         }
     }

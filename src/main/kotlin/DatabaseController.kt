@@ -4,7 +4,6 @@ import com.mongodb.client.MongoClients
 import com.mongodb.client.MongoCollection
 import com.mongodb.client.MongoDatabase
 import org.bson.Document
-import kotlin.system.exitProcess
 
 class DatabaseController private constructor(
     val subscriptions: MongoCollection<Document>,
@@ -15,15 +14,17 @@ class DatabaseController private constructor(
             val client = try {
                 MongoClients.create(config.connection)
             } catch (ex: IllegalArgumentException) {
-                logger.error("Invalid MongoDB connection string ${config.connection}", ex)
-                exitProcess(ExitCodes.INVALID_DB_CONNECTION_STRING)
+                logger.fatal(
+                    ExitCodes.INVALID_DB_CONNECTION_STRING,
+                    "Invalid MongoDB connection string ${config.connection}",
+                    ex
+                )
             }
 
             val database = try {
                 client.getDatabase(config.database)
             } catch (ex: IllegalArgumentException) {
-                logger.error("Invalid MongoDB database name ${config.database}", ex)
-                exitProcess(ExitCodes.INVALID_DB_NAME)
+                logger.fatal(ExitCodes.INVALID_DB_NAME, "Invalid MongoDB database name ${config.database}", ex)
             }
 
             val subscriptions = database.tryGetCollection(config.collections.subscriptions)
@@ -35,8 +36,7 @@ class DatabaseController private constructor(
         private fun MongoDatabase.tryGetCollection(collectionName: String) = try {
             getCollection(collectionName)
         } catch (ex: IllegalArgumentException) {
-            logger.error("Invalid MongoDB collection name $collectionName", ex)
-            exitProcess(ExitCodes.INVALID_DB_COLLECTION_NAME)
+            logger.fatal(ExitCodes.INVALID_DB_COLLECTION_NAME, "Invalid MongoDB collection name $collectionName", ex)
         }
     }
 }

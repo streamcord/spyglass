@@ -7,15 +7,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.launch
-import mu.KotlinLogging
 import org.bson.Document
 import org.bson.internal.Base64
 import java.nio.ByteBuffer
 import kotlin.random.Random
-import kotlin.system.exitProcess
 
 private fun generateSecret() = Base64.encode(Random.nextBytes(32))
-internal val logger = KotlinLogging.logger {}
+internal var logger: Logger = SimpleLogger()
+    private set
 
 suspend fun main() = coroutineScope<Unit> {
     val workerIndex = System.getenv("SPYGLASS_WORKER_INDEX")?.toLongOrNull()
@@ -26,6 +25,11 @@ suspend fun main() = coroutineScope<Unit> {
 
     val config = loadConfig()
     logger.info("Config read. Starting up worker")
+
+    // set default logging level based on config
+    System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", config.logging.level.toUpperCase())
+    logger = ComplexLogger(workerIndex, config.logging)
+
     val clientID = ClientID(config.twitch.client_id)
     val clientSecret = ClientSecret(config.twitch.client_secret)
     val callbackUri = "$workerIndex.${config.twitch.base_callback}"
@@ -70,10 +74,7 @@ suspend fun main() = coroutineScope<Unit> {
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
 
-private fun noEnv(message: String): Nothing {
-    logger.error(message)
-    exitProcess(1)
-}
+private fun noEnv(message: String): Nothing = logger.fatal(ExitCodes.MISSING_ENV_VAR, message)
 
 /**
  * Synchronizes subscriptions between Twitch and the database. If any subscriptions are reported by Twitch that aren't
@@ -151,7 +152,7 @@ fun CoroutineScope.maybeCreateSubscriptions(
             createSubscription("stream.online")
         }
         val streamEndAction = document.getInteger("stream_end_action")
-        if (existing.none { it.getString("type") == "stream.offline" } && streamEndAction != 0 ) {
+        if (existing.none { it.getString("type") == "stream.offline" } && streamEndAction != 0) {
             createSubscription("stream.offline")
         }
     }

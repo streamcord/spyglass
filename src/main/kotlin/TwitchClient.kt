@@ -12,7 +12,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlin.system.exitProcess
 
 class TwitchClient private constructor(
     val clientID: ClientID, private val clientSecret: ClientSecret, private val callbackUri: String,
@@ -129,8 +128,10 @@ class TwitchClient private constructor(
             }
 
             if (!response.status.isSuccess()) {
-                logger.error("Failed to fetch access token from Twitch. Error ${response.readText()}")
-                exitProcess(ExitCodes.NO_TWITCH_ACCESS_TOKEN)
+                logger.fatal(
+                    ExitCodes.NO_TWITCH_ACCESS_TOKEN,
+                    "Failed to fetch access token from Twitch. Error ${response.readText()}"
+                )
             }
 
             return Json.safeDecodeFromString(response.readText())

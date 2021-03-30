@@ -89,7 +89,9 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
 
     companion object {
         fun create(subsCollection: MongoCollection<Document>, aqmpConfig: AppConfig.Amqp): TwitchServer {
-            val sender = Sender.Amqp.create(aqmpConfig) ?: exitProcess(ExitCodes.AMQP_CONNECTION_FAILED)
+            val sender = Sender.Amqp.create(aqmpConfig).getOrElse {
+                exitProcess(ExitCodes.AMQP_CONNECTION_FAILED)
+            }
 
             return TwitchServer(subsCollection, sender)
         }

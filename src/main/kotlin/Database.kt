@@ -60,5 +60,5 @@ fun MongoCollection<Document>.watch(
     return watch(listOf(Aggregates.match(Filters.`in`("operationType", operationTypes.toList()))))
         .asFlow()
         .onEach { onEach(it) }
-        .catch { cause -> logger.warn("Exception in notifications change stream watch: $cause") }
+        .catch { cause -> logger.warn("Exception in notifications change stream watch", cause) }
 }
