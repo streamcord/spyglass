@@ -128,7 +128,7 @@ private suspend fun syncSubscriptions(
         twitchClient.createSubscription(sub.userID, sub.type, secret)?.let {
             collection.insertSubscription(twitchClient.clientID, secret, it)
             logger.info("Recreated missing subscription for user with ID ${sub.userID} and type ${sub.type}")
-        } ?: logger.warn("Failed to recreate missing subscription for user with ID ${sub.userID} and type ${sub.type}")
+        }
     }
 
     missingFromTwitch.forEach {
@@ -211,7 +211,6 @@ suspend fun maybeRemoveSubscriptions(
                 val subID = it.getString("sub_id")
                 if (!twitchClient.removeSubscription(subID)) {
                     // failed to remove subscription, just exit. we'll try again later
-                    logger.warn("Failed to remove subscription with ID $subID")
                     return@forEach
                 }
                 database.subscriptions.deleteOne(it)
