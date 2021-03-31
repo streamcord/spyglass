@@ -18,7 +18,6 @@ repositories {
 dependencies {
     // HTTP Server
     implementation("io.ktor", "ktor-server-cio", "1.5.2")
-    implementation("org.slf4j", "slf4j-simple", "2.0.0-alpha1")
 
     // HTTP Client
     implementation("io.ktor", "ktor-client-java", "1.5.2")
@@ -34,7 +33,8 @@ dependencies {
     implementation("com.rabbitmq", "amqp-client", "5.11.0")
 
     // Logging
-    implementation("io.github.microutils", "kotlin-logging", "2.0.6")
+    implementation("org.tinylog", "slf4j-tinylog", "2.2.1")
+    implementation("org.tinylog", "tinylog-impl", "2.2.1")
 
     // Tests
     testImplementation(kotlin("test-junit5"))
@@ -60,7 +60,7 @@ tasks {
 
     shadowJar {
         minimize {
-            exclude(dependency("org.slf4j:slf4j-simple:.*"))
+            exclude(dependency("org.tinylog:.*:.*"))
         } // remove unused symbols from the fat JAR
     }
 }

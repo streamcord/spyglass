@@ -26,7 +26,11 @@ class AppConfig(val mongo: Mongo, val twitch: Twitch, val amqp: Amqp, val loggin
     }
 
     @Serializable
-    class Logging(val level: String = "info", val error_webhook: String? = null)
+    class Logging(
+        val level: String = "info",
+        val format: String = "{date} [{thread}] {package} {level}: {message}",
+        val error_webhook: String? = null
+    )
 }
 
 fun loadConfig(): AppConfig {
@@ -49,7 +53,7 @@ fun loadConfig(): AppConfig {
                     queue: <queue name, e.g. "events">
             """.trimIndent()
         )
-        exitProcess(1)
+        exitProcess(ExitCodes.MISSING_CONFIG_FILE)
     }
 
     return Yaml.default.decodeFromString(configFile.readText())

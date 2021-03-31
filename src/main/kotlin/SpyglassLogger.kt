@@ -13,69 +13,46 @@ import kotlinx.serialization.Required
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import mu.KotlinLogging
+import org.tinylog.Logger
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
 
-sealed interface Logger {
-    fun fatal(exitCode: Int, text: String, ex: Throwable? = null): Nothing
-    fun error(text: String, ex: Throwable? = null)
-    fun warn(text: String, ex: Throwable? = null)
-    fun info(text: String, ex: Throwable? = null)
-    fun debug(text: String, ex: Throwable? = null)
-    fun trace(text: String, ex: Throwable? = null)
-}
+@Suppress("NOTHING_TO_INLINE") // inlined for callsite in tinylog
+class SpyglassLogger(private val workerIndex: Long, config: AppConfig.Logging) {
+    internal val coroutineScope = CoroutineScope(newSingleThreadContext("SpyglassLogger"))
+    internal val client = config.error_webhook?.let { LoggerClient(it) }
 
-class SimpleLogger : Logger {
-    private val kotlinLogger = KotlinLogging.logger {}
-
-    override fun fatal(exitCode: Int, text: String, ex: Throwable?): Nothing {
-        kotlinLogger.error(text, ex)
-        exitProcess(exitCode)
-    }
-
-    override fun error(text: String, ex: Throwable?) = kotlinLogger.error(text, ex)
-    override fun warn(text: String, ex: Throwable?) = kotlinLogger.warn(text, ex)
-    override fun info(text: String, ex: Throwable?) = kotlinLogger.info(text, ex)
-    override fun debug(text: String, ex: Throwable?) = kotlinLogger.debug(text, ex)
-    override fun trace(text: String, ex: Throwable?) = kotlinLogger.trace(text, ex)
-}
-
-class ComplexLogger(private val workerIndex: Long, config: AppConfig.Logging) : Logger {
-    private val coroutineScope = CoroutineScope(newSingleThreadContext("SpyglassLogger"))
-    private val kotlinLogger = KotlinLogging.logger {}
-    private val client = config.error_webhook?.let { LoggerClient(it) }
-
-    override fun fatal(exitCode: Int, text: String, ex: Throwable?): Nothing {
-        kotlinLogger.error(text, ex)
+    internal inline fun fatal(exitCode: Int, text: String, ex: Throwable? = null): Nothing {
+        Logger.error(ex, text)
         runBlocking {
             client?.postError(workerIndex, text, ex)
         }
         exitProcess(exitCode)
     }
 
-    override fun error(text: String, ex: Throwable?) {
-        kotlinLogger.error(text, ex)
+    internal inline fun error(text: String, ex: Throwable? = null) {
+        Logger.error(ex, text)
         coroutineScope.launch {
             client?.postError(workerIndex, text, ex)
         }
     }
 
-    override fun warn(text: String, ex: Throwable?) {
-        kotlinLogger.error(text, ex)
+    internal inline fun warn(text: String, ex: Throwable? = null) {
+        Logger.warn(ex, text)
         coroutineScope.launch {
             client?.postWarning(workerIndex, text, ex)
         }
     }
 
-    override fun info(text: String, ex: Throwable?) = kotlinLogger.info(text, ex)
-    override fun debug(text: String, ex: Throwable?) = kotlinLogger.debug(text, ex)
-    override fun trace(text: String, ex: Throwable?) = kotlinLogger.trace(text, ex)
+    internal inline fun info(text: String, ex: Throwable? = null) = Logger.info(ex, text)
+    internal inline fun debug(text: String, ex: Throwable? = null) = Logger.debug(ex, text)
+    internal inline fun trace(text: String, ex: Throwable? = null) = Logger.trace(ex, text)
 }
 
-private class LoggerClient(val webhookAddress: String) {
+@PublishedApi
+internal class LoggerClient(private val webhookAddress: String) {
     private val httpClient = HttpClient(Java) {
         expectSuccess = false
     }
@@ -104,7 +81,7 @@ private class LoggerClient(val webhookAddress: String) {
             contentType(ContentType.Application.Json)
             println(body)
             body = Json.encodeToString(WebhookBody(listOf(embed)))
-        }.also { println(it.status) }
+        }
     }
 }
 

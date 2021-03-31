@@ -50,30 +50,16 @@ sealed interface Sender {
             }
         }
     }
-
-    object Logger : Sender {
-        override fun sendOnlineEvent(streamID: String, userID: String, userName: String) {
-            logger.info("Stream by user $userName (user ID $userID) started with stream ID $streamID")
-        }
-
-        override fun sendOfflineEvent(userID: String, userName: String) {
-            logger.info("Stream by user $userName (user ID $userID) ended")
-        }
-    }
 }
 
-private sealed interface AmqpEvent {
-    val op: Int
+@Serializable
+private sealed class AmqpEvent(@Required val op: Int) {
+    @Required
+    val type = "spyglass"
 
     @Serializable
-    data class StreamOnline(val streamID: String, val userID: String) : AmqpEvent {
-        @Required
-        override val op = 1
-    }
+    data class StreamOnline(val streamID: String, val userID: String) : AmqpEvent(op = 1)
 
     @Serializable
-    data class StreamOffline(val userID: String) : AmqpEvent {
-        @Required
-        override val op = 2
-    }
+    data class StreamOffline(val userID: String) : AmqpEvent(op = 2)
 }

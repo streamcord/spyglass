@@ -3,17 +3,19 @@ package io.streamcord.spyglass
 import com.mongodb.client.MongoCollection
 import com.mongodb.client.model.changestream.ChangeStreamDocument
 import com.mongodb.client.model.changestream.OperationType
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.launch
+import org.bson.BsonInvalidOperationException
 import org.bson.Document
 import org.bson.internal.Base64
+import org.tinylog.configuration.Configuration
 import java.nio.ByteBuffer
 import kotlin.random.Random
+import kotlin.system.exitProcess
 
 private fun generateSecret() = Base64.encode(Random.nextBytes(32))
-internal var logger: Logger = SimpleLogger()
+internal lateinit var logger: SpyglassLogger
     private set
 
 suspend fun main() = coroutineScope<Unit> {
@@ -24,11 +26,19 @@ suspend fun main() = coroutineScope<Unit> {
         ?: noEnv("No valid worker total found. Populate env variable SPYGLASS_WORKER_TOTAL with the total number of workers.")
 
     val config = loadConfig()
+
+    // set default logging level and format based on config
+    Configuration.set("writer.level", config.logging.level)
+    Configuration.set("writer.format", config.logging.format)
+    Configuration.set("exception", "keep: io.streamcord")
+
+    logger = SpyglassLogger(workerIndex, config.logging)
     logger.info("Config read. Starting up worker")
 
-    // set default logging level based on config
-    System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", config.logging.level.toUpperCase())
-    logger = ComplexLogger(workerIndex, config.logging)
+    // global error handler just in case
+    Thread.setDefaultUncaughtExceptionHandler { t, e ->
+        logger.fatal(ExitCodes.UNCAUGHT_ERROR, "Fatal uncaught error in thread $t", e)
+    }
 
     val clientID = ClientID(config.twitch.client_id)
     val clientSecret = ClientSecret(config.twitch.client_secret)
@@ -50,16 +60,16 @@ suspend fun main() = coroutineScope<Unit> {
     database.subscriptions.find().forEach {
         val doc = Document("streamer_id", it.getLong("user_id").toString())
 
-        if (database.notifications.find(doc).none()) {
+        if (database.notifications.countDocuments(doc) == 0L) {
             val subID = it.getString("sub_id")
-            logger.warn("Subscription with ID $subID has no associated notifications, attempting removal")
+            logger.info("Subscription with ID $subID has no associated notifications, attempting removal")
             if (twitchClient.removeSubscription(subID)) {
                 database.subscriptions.deleteOne(it)
             }
         }
     }
 
-    fun processNotification(doc: Document) {
+    suspend fun processNotification(doc: Document) {
         maybeCreateSubscriptions(doc, twitchClient, database.subscriptions) { it % workerTotal == workerIndex }
     }
     database.notifications.find().forEach { processNotification(it) }
@@ -74,7 +84,10 @@ suspend fun main() = coroutineScope<Unit> {
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
 
-private fun noEnv(message: String): Nothing = logger.fatal(ExitCodes.MISSING_ENV_VAR, message)
+private fun noEnv(message: String): Nothing {
+    System.err.println("Fatal error: $message")
+    exitProcess(ExitCodes.MISSING_ENV_VAR)
+}
 
 /**
  * Synchronizes subscriptions between Twitch and the database. If any subscriptions are reported by Twitch that aren't
@@ -128,32 +141,44 @@ private suspend fun syncSubscriptions(
         .forEach { replaceSubscription(it.value) }
 }
 
-fun CoroutineScope.maybeCreateSubscriptions(
+suspend fun maybeCreateSubscriptions(
     document: Document,
     twitchClient: TwitchClient,
     subscriptions: MongoCollection<Document>,
     filter: (Long) -> Boolean
 ) {
-    val streamerID = document.getString("streamer_id").toLong()
+    val streamerID = document.getString("streamer_id")?.toLong() ?: return
     if (!filter(streamerID)) return
 
-    val existing = subscriptions.find(Document("user_id", streamerID))
-
-    suspend fun createSubscription(type: String) {
-        val secret = generateSecret()
-        twitchClient.createSubscription(streamerID, type, secret)?.let {
-            subscriptions.insertSubscription(twitchClient.clientID, secret, it)
-            logger.info("Created subscription with type $type for user ID $streamerID")
+    coroutineScope {
+        val onlineFilter = document {
+            append("user_id", streamerID)
+            append("type", "stream.online")
         }
-    }
-
-    launch {
-        if (existing.none { it.getString("type") == "stream.online" }) {
-            createSubscription("stream.online")
+        val offlineFilter = document {
+            append("user_id", streamerID)
+            append("type", "stream.offline")
         }
-        val streamEndAction = document.getInteger("stream_end_action")
-        if (existing.none { it.getString("type") == "stream.offline" } && streamEndAction != 0) {
-            createSubscription("stream.offline")
+
+        suspend fun createSubscription(type: String) {
+            val secret = generateSecret()
+            twitchClient.createSubscription(streamerID, type, secret)?.let {
+                subscriptions.insertSubscription(twitchClient.clientID, secret, it)
+                logger.info("Created subscription with type $type for user ID $streamerID")
+            }
+        }
+
+        launch {
+            if (subscriptions.countDocuments(onlineFilter) == 0L) {
+                createSubscription("stream.online")
+            }
+        }
+
+        launch {
+            val streamEndAction = document.getInteger("stream_end_action")
+            if (streamEndAction != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
+                createSubscription("stream.offline")
+            }
         }
     }
 }
@@ -164,24 +189,34 @@ suspend fun maybeRemoveSubscriptions(
     database: DatabaseController,
     filter: (Long) -> Boolean
 ) {
-    val streamerID = ByteBuffer.wrap(document.documentKey!!.getBinary("_id").data).long
-    if (!filter(streamerID)) return
-
-    val otherNotifications = database.notifications.find(Document("streamer_id", streamerID.toString()))
-    if (otherNotifications.any()) {
-        // other notifications for this streamer still exist, so we don't need to delete the subscriptions
-        logger.info("Other notifications still exist for streamer ID $streamerID, not removing subscriptions")
+    val idBinary = try {
+        document.documentKey!!.getBinary("_id")
+    } catch (ex: BsonInvalidOperationException) {
+        logger.warn("Received removal change stream for document without a binary _id field. Ignoring")
         return
     }
 
-    database.subscriptions.find(Document("user_id", streamerID)).forEach {
-        val subID = it.getString("sub_id")
-        if (!twitchClient.removeSubscription(subID)) {
-            // failed to remove subscription, just exit. we'll try again later
-            logger.warn("Failed to remove subscription with ID $subID")
-            return
+    val streamerID = ByteBuffer.wrap(idBinary.data).long
+    if (!filter(streamerID)) return
+
+    coroutineScope {
+        if (database.notifications.countDocuments(Document("streamer_id", streamerID.toString())) > 0) {
+            // other notifications for this streamer still exist, so we don't need to delete the subscriptions
+            logger.info("Other notifications still exist for streamer ID $streamerID, not removing subscriptions")
+            return@coroutineScope
         }
-        database.subscriptions.deleteOne(it)
-        logger.info("Removed subscription with ID $subID")
+
+        launch {
+            database.subscriptions.find(Document("user_id", streamerID)).forEach {
+                val subID = it.getString("sub_id")
+                if (!twitchClient.removeSubscription(subID)) {
+                    // failed to remove subscription, just exit. we'll try again later
+                    logger.warn("Failed to remove subscription with ID $subID")
+                    return@forEach
+                }
+                database.subscriptions.deleteOne(it)
+                logger.info("Removed subscription with ID $subID")
+            }
+        }
     }
 }
