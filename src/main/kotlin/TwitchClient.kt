@@ -192,5 +192,5 @@ data class SubscriptionData(
     data class Condition(val broadcaster_user_id: Long)
 
     @Serializable
-    data class Transport(val method: String, val callback: String)
+    data class Transport(val method: String, val callback: String, val batching: Boolean? = null)
 }
