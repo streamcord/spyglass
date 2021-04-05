@@ -21,7 +21,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.system.exitProcess
 
-class TwitchServer(private val subscriptions: MongoCollection<Document>, private val sender: Sender) {
+class TwitchServer(private val subscriptions: MongoCollection<Document>, private val sender: AmqpSender) {
     private val httpServer = embeddedServer(CIO, port = 8080) {
         routing {
             post("webhooks/callback") {
@@ -90,7 +90,7 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
 
     companion object {
         fun create(subsCollection: MongoCollection<Document>, aqmpConfig: AppConfig.Amqp): TwitchServer {
-            val sender = Sender.Amqp.create(aqmpConfig).getOrElse {
+            val sender = AmqpSender.create(aqmpConfig).getOrElse {
                 exitProcess(ExitCodes.AMQP_CONNECTION_FAILED)
             }
 
@@ -132,7 +132,7 @@ private fun PipelineContext<Unit, ApplicationCall>.verifyRequest(
 }
 
 private fun PipelineContext<Unit, ApplicationCall>.handleNotification(
-    sender: Sender,
+    sender: AmqpSender,
     timestamp: String,
     notification: TwitchNotification
 ) {

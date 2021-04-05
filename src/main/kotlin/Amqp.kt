@@ -8,47 +8,40 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.IOException
 
-sealed interface Sender {
-    fun sendOnlineEvent(streamID: Long, userID: Long, timestamp: String)
+class AmqpSender private constructor(private val queueName: String, private val channel: Channel) {
+    fun sendOnlineEvent(streamID: Long, userID: Long, timestamp: String) =
+        send(AmqpEvent.StreamOnline(userID, streamID, timestamp))
 
-    fun sendOfflineEvent(userID: Long, timestamp: String)
+    fun sendOfflineEvent(userID: Long, timestamp: String) = send(AmqpEvent.StreamOffline(userID, timestamp))
 
-    class Amqp private constructor(private val queueName: String, private val channel: Channel) : Sender {
-        override fun sendOnlineEvent(streamID: Long, userID: Long, timestamp: String) =
-            send(AmqpEvent.StreamOnline(userID, streamID, timestamp))
+    private inline fun <reified T> send(obj: T) = sendText(Json.encodeToString(obj))
 
-        override fun sendOfflineEvent(userID: Long, timestamp: String) =
-            send(AmqpEvent.StreamOffline(userID, timestamp))
-
-        private inline fun <reified T> send(obj: T) = send(Json.encodeToString(obj))
-
-        private fun send(text: String) {
-            try {
-                channel.queueDeclarePassive(queueName)
-            } catch (ex: IOException) {
-                logger.warn("Encountered exception when checking if AMQP queue exists, attempting to redeclare", ex)
-                channel.queueDeclare(queueName, true, false, false, null)
-            }
-            channel.basicPublish("", queueName, null, text.encodeToByteArray())
+    private fun sendText(text: String) {
+        try {
+            channel.queueDeclarePassive(queueName)
+        } catch (ex: IOException) {
+            logger.warn("Encountered exception when checking if AMQP queue exists, attempting to redeclare", ex)
+            channel.queueDeclare(queueName, true, false, false, null)
         }
+        channel.basicPublish("", queueName, null, text.encodeToByteArray())
+    }
 
-        companion object {
-            fun create(config: AppConfig.Amqp): Result<Amqp> = try {
-                val factory = ConnectionFactory().apply {
-                    host = config.connection
-                    username = config.authentication?.username
-                    password = config.authentication?.password
-                }
-
-                val connection = factory.newConnection()
-                val channel = connection.createChannel().apply {
-                    queueDeclare(config.queue, true, false, false, null)
-                }
-
-                Result.success(Amqp(config.queue, channel))
-            } catch (ex: Throwable) {
-                Result.failure(ex)
+    companion object {
+        fun create(config: AppConfig.Amqp): Result<AmqpSender> = try {
+            val factory = ConnectionFactory().apply {
+                host = config.connection
+                username = config.authentication?.username
+                password = config.authentication?.password
             }
+
+            val connection = factory.newConnection()
+            val channel = connection.createChannel().apply {
+                queueDeclare(config.queue, true, false, false, null)
+            }
+
+            Result.success(AmqpSender(config.queue, channel))
+        } catch (ex: Throwable) {
+            Result.failure(ex)
         }
     }
 }
