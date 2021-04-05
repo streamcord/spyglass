@@ -9,15 +9,16 @@ import kotlinx.serialization.json.Json
 import java.io.IOException
 
 sealed interface Sender {
-    fun sendOnlineEvent(streamID: String, userID: String, userName: String)
+    fun sendOnlineEvent(streamID: Long, userID: Long, timestamp: String)
 
-    fun sendOfflineEvent(userID: String, userName: String)
+    fun sendOfflineEvent(userID: Long, timestamp: String)
 
     class Amqp private constructor(private val queueName: String, private val channel: Channel) : Sender {
-        override fun sendOnlineEvent(streamID: String, userID: String, userName: String) =
-            send(AmqpEvent.StreamOnline(streamID, userID))
+        override fun sendOnlineEvent(streamID: Long, userID: Long, timestamp: String) =
+            send(AmqpEvent.StreamOnline(userID, streamID, timestamp))
 
-        override fun sendOfflineEvent(userID: String, userName: String) = send(AmqpEvent.StreamOffline(userID))
+        override fun sendOfflineEvent(userID: Long, timestamp: String) =
+            send(AmqpEvent.StreamOffline(userID, timestamp))
 
         private inline fun <reified T> send(obj: T) = send(Json.encodeToString(obj))
 
@@ -58,8 +59,8 @@ private sealed class AmqpEvent(@Required val op: Int) {
     val v = 1
 
     @Serializable
-    data class StreamOnline(val streamID: String, val userID: String) : AmqpEvent(op = 1)
+    data class StreamOnline(val userID: Long, val streamID: Long, val time: String) : AmqpEvent(op = 1)
 
     @Serializable
-    data class StreamOffline(val userID: String) : AmqpEvent(op = 2)
+    data class StreamOffline(val userID: Long, val time: String) : AmqpEvent(op = 2)
 }

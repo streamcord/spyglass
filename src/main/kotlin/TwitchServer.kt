@@ -64,7 +64,8 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
 
                 if (verifyRequest(subscriptions, notification.subscription.id, text)) {
                     logger.trace("Request verified, handling notification")
-                    handleNotification(sender, notification)
+                    val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
+                    handleNotification(sender, timestamp, notification)
                     subscriptions.updateSubscription(notification.subscription.id, messageID)
                     call.respond(HttpStatusCode.NoContent)
                 } else {
@@ -132,6 +133,7 @@ private fun PipelineContext<Unit, ApplicationCall>.verifyRequest(
 
 private fun PipelineContext<Unit, ApplicationCall>.handleNotification(
     sender: Sender,
+    timestamp: String,
     notification: TwitchNotification
 ) {
     when (val subType = call.request.header("Twitch-Eventsub-Subscription-Type")) {
@@ -139,12 +141,12 @@ private fun PipelineContext<Unit, ApplicationCall>.handleNotification(
             val eventData = Json.decodeFromJsonElement<TwitchEvent.StreamOnline>(notification.event)
 
             if (eventData.type == "live") {
-                sender.sendOnlineEvent(eventData.id, eventData.broadcaster_user_id, eventData.broadcaster_user_name)
+                sender.sendOnlineEvent(eventData.id.toLong(), eventData.broadcaster_user_id.toLong(), timestamp)
             }
         }
         "stream.offline" -> {
             val eventData = Json.decodeFromJsonElement<TwitchEvent.StreamOffline>(notification.event)
-            sender.sendOfflineEvent(eventData.broadcaster_user_id, eventData.broadcaster_user_name)
+            sender.sendOfflineEvent(eventData.broadcaster_user_id.toLong(), timestamp)
         }
         else -> logger.warn("Received notification for subscription type $subType, ignoring")
     }
