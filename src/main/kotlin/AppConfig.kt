@@ -40,17 +40,20 @@ fun loadConfig(): AppConfig {
                 No $configName file in current directory. Create one and format it as such:
                 
                 mongo:
-                    connection: <connection string for replica set, e.g. "mongodb://localhost">
-                    database: <name of db, e.g. "eventsub">
-                    collections:
-                        subscriptions: <name of collection, e.g. "subscriptions">
-                        workers: <name of collection, e.g. "workers">
-                        notifications: <name of collection, e.g. "notifications">
+                  connection: <connection string for replica set, e.g. "localhost?replicaSet=replicaset">
+                  database: <name of db, e.g. "eventsub">
+                  collections:
+                    subscriptions: <name of collection, e.g. "subscriptions">
+                    notifications: <name of collection, e.g. "notifications">
+                
+                twitch:
+                  client_id: <Twitch client ID, e.g. "yuk4id1awfrr5qkj5yh8qzlgpg66">
+                  client_secret: <Twitch client secret, e.g. "5j48e47jhzb55o7zainz7e7niist">
+                  base_callback: <Webhook callback URL for EventSub notifications, e.g. "eventsub.streamcord.io">
                 
                 amqp:
-                    connection: <connection string, e.g. "localhost">
-                    exchange: <exchange name, e.g. "amq.direct">
-                    queue: <queue name, e.g. "events">
+                  connection: <connection string, e.g. "localhost">
+                  queue: <queue name, e.g. "events">
             """.trimIndent()
         )
         exitProcess(ExitCodes.MISSING_CONFIG_FILE)
