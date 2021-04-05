@@ -5,10 +5,7 @@ import io.ktor.client.engine.java.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.newSingleThreadContext
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import kotlinx.serialization.Required
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -21,6 +18,7 @@ import kotlin.system.exitProcess
 
 @Suppress("NOTHING_TO_INLINE") // inlined for callsite in tinylog
 class SpyglassLogger(private val workerIndex: Long, config: AppConfig.Logging) {
+    @OptIn(ExperimentalCoroutinesApi::class)
     internal val coroutineScope = CoroutineScope(newSingleThreadContext("SpyglassLogger"))
     internal val client = config.error_webhook?.let { LoggerClient(it) }
 
@@ -79,7 +77,6 @@ internal class LoggerClient(private val webhookAddress: String) {
 
         httpClient.post<HttpResponse>(webhookAddress) {
             contentType(ContentType.Application.Json)
-            println(body)
             body = Json.encodeToString(WebhookBody(listOf(embed)))
         }
     }
