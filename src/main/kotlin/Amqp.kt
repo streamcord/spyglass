@@ -55,7 +55,7 @@ sealed interface Sender {
 @Serializable
 private sealed class AmqpEvent(@Required val op: Int) {
     @Required
-    val type = "spyglass"
+    val v = 1
 
     @Serializable
     data class StreamOnline(val streamID: String, val userID: String) : AmqpEvent(op = 1)
