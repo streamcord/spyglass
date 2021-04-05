@@ -12,7 +12,7 @@ class DatabaseController private constructor(
     companion object {
         fun create(config: AppConfig.Mongo): DatabaseController {
             val client = try {
-                MongoClients.create(config.connection)
+                MongoClients.create("mongodb://${config.connection}")
             } catch (ex: IllegalArgumentException) {
                 logger.fatal(
                     ExitCodes.INVALID_DB_CONNECTION_STRING,
