@@ -17,10 +17,10 @@ repositories {
 
 dependencies {
     // HTTP Server
-    implementation("io.ktor", "ktor-server-cio", "1.5.2")
+    implementation("io.ktor", "ktor-server-cio", "1.5.3")
 
     // HTTP Client
-    implementation("io.ktor", "ktor-client-java", "1.5.2")
+    implementation("io.ktor", "ktor-client-java", "1.5.3")
 
     // Serialization
     implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.1.0")
