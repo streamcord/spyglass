@@ -9,4 +9,5 @@ object ExitCodes {
     const val INVALID_DB_COLLECTION_NAME = 6
     const val AMQP_CONNECTION_FAILED = 7
     const val UNCAUGHT_ERROR = 255
+    const val WORST_CASE_SCENARIO = 666
 }
