@@ -54,20 +54,23 @@ suspend fun main() = coroutineScope {
     // synchronize subscriptions between DB and twitch
     syncSubscriptions(twitchClient, database.subscriptions) { it % workerTotal == workerIndex }
 
+    val eventHandler = EventHandler(4, workerIndex, workerTotal)
+
     // find subscriptions without an associated notification and remove them
     database.subscriptions.find().forEach {
-        val doc = Document("streamer_id", it.getLong("user_id").toString())
+        val userID = it.getLong("user_id")
+        val doc = Document("streamer_id", userID.toString())
 
         if (database.notifications.countDocuments(doc) == 0L) {
             val subID = it.getString("sub_id")
             logger.info("Subscription with ID $subID has no associated notifications, attempting removal")
-            if (twitchClient.removeSubscription(subID)) {
-                database.subscriptions.deleteOne(it)
+            eventHandler.submitEvent(userID) {
+                if (twitchClient.removeSubscription(subID)) {
+                    database.subscriptions.deleteOne(it)
+                }
             }
         }
     }
-
-    val eventHandler = EventHandler(4, workerIndex, workerTotal)
 
     database.notifications.find().forEach { doc ->
         val streamerID = doc.getString("streamer_id")?.toLong() ?: return@forEach
@@ -77,6 +80,10 @@ suspend fun main() = coroutineScope {
     }
 
     database.notifications.watch("insert", "delete", "update", "replace", "invalidate") { doc ->
+        if (doc.operationType == OperationType.INVALIDATE) {
+            logger.fatal(ExitCodes.WORST_CASE_SCENARIO, "DB INVALIDATION DETECTED. Halting and catching fire")
+        }
+
         if (!doc.documentKey!!.isBinary("_id")) {
             logger.warn("Received change stream event for document without a binary _id field. Ignoring")
             return@watch
@@ -86,7 +93,7 @@ suspend fun main() = coroutineScope {
             OperationType.INSERT -> doc.fullDocument!!.getString("streamer_id")?.toLong() ?: return@watch
             OperationType.DELETE, OperationType.UPDATE, OperationType.REPLACE ->
                 ByteBuffer.wrap(doc.documentKey!!.getBinary("_id").data).long
-            else -> logger.fatal(ExitCodes.WORST_CASE_SCENARIO, "DB INVALIDATION DETECTED. Halting and catching fire")
+            else -> return@watch
         }
 
         if (streamerID % workerTotal != workerIndex) return@watch
