@@ -5,9 +5,6 @@ import com.mongodb.client.model.changestream.OperationType
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.launch
-import org.bson.BsonDocument
-import org.bson.BsonInvalidOperationException
 import org.bson.Document
 import org.bson.internal.Base64
 import org.tinylog.configuration.Configuration
@@ -19,7 +16,7 @@ private fun generateSecret() = Base64.encode(Random.nextBytes(32))
 internal lateinit var logger: SpyglassLogger
     private set
 
-suspend fun main() = coroutineScope<Unit> {
+suspend fun main() = coroutineScope {
     val workerIndex = System.getenv("SPYGLASS_WORKER_INDEX")?.toLongOrNull()
         ?: noEnv("No valid worker index found. Populate env variable SPYGLASS_WORKER_INDEX with the worker index.")
 
@@ -70,33 +67,54 @@ suspend fun main() = coroutineScope<Unit> {
         }
     }
 
-    suspend fun processNotification(doc: Document) {
-        maybeCreateSubscriptions(doc, twitchClient, database.subscriptions) { it % workerTotal == workerIndex }
+    val eventHandler = EventHandler(4, workerIndex, workerTotal)
+
+    database.notifications.find().forEach { doc ->
+        val streamerID = doc.getString("streamer_id")?.toLong() ?: return@forEach
+        eventHandler.submitEvent(streamerID) {
+            maybeCreateSubscriptions(streamerID, doc, twitchClient, database.subscriptions)
+        }
     }
-    database.notifications.find().forEach { processNotification(it) }
+
     database.notifications.watch("insert", "delete", "update", "replace", "invalidate") { doc ->
-        when (doc.operationType) {
-            OperationType.INSERT -> {
-                processNotification(doc.fullDocument!!)
+        if (!doc.documentKey!!.isBinary("_id")) {
+            logger.warn("Received change stream event for document without a binary _id field. Ignoring")
+            return@watch
+        }
+
+        val streamerID = when (doc.operationType) {
+            OperationType.INSERT -> doc.fullDocument!!.getString("streamer_id")?.toLong() ?: return@watch
+            OperationType.DELETE, OperationType.UPDATE, OperationType.REPLACE ->
+                ByteBuffer.wrap(doc.documentKey!!.getBinary("_id").data).long
+            else -> logger.fatal(ExitCodes.WORST_CASE_SCENARIO, "DB INVALIDATION DETECTED. Halting and catching fire")
+        }
+
+        if (streamerID % workerTotal != workerIndex) return@watch
+
+        eventHandler.submitEvent(streamerID) {
+            when (doc.operationType) {
+                OperationType.INSERT -> {
+                    maybeCreateSubscriptions(streamerID, doc.fullDocument!!, twitchClient, database.subscriptions)
+                }
+                OperationType.DELETE -> {
+                    maybeRemoveSubscriptions(streamerID, twitchClient, database)
+                }
+                OperationType.UPDATE -> { // on update or replace, treat as delete then reinsert
+                    maybeRemoveSubscriptions(streamerID, twitchClient, database)
+                    val docID = doc.documentKey!!.getBinary("_id")
+                    val updatedDoc = database.notifications.find(Document("_id", docID)).first()!!
+                    maybeCreateSubscriptions(streamerID, updatedDoc, twitchClient, database.subscriptions)
+                }
+                OperationType.REPLACE -> { // on replace, do the same thing as update, but don't look up the document
+                    maybeRemoveSubscriptions(streamerID, twitchClient, database)
+                    maybeCreateSubscriptions(streamerID, doc.fullDocument!!, twitchClient, database.subscriptions)
+                }
+                else -> logger.debug("Obtained change stream event with type ${doc.operationType.value}, ignoring")
             }
-            OperationType.DELETE -> {
-                maybeRemoveSubscriptions(doc.documentKey!!, twitchClient, database) { it % workerTotal == workerIndex }
-            }
-            OperationType.UPDATE -> { // on update or replace, treat as delete then reinsert
-                val docKey = doc.documentKey!!
-                maybeRemoveSubscriptions(docKey, twitchClient, database) { it % workerTotal == workerIndex }
-                processNotification(database.notifications.find(Document("_id", doc.documentKey!!)).first()!!)
-            }
-            OperationType.REPLACE -> { // on replace, do the same thing as update, but don't look up the document
-                maybeRemoveSubscriptions(doc.documentKey!!, twitchClient, database) { it % workerTotal == workerIndex }
-                processNotification(doc.fullDocument!!)
-            }
-            OperationType.INVALIDATE -> {
-                logger.fatal(ExitCodes.WORST_CASE_SCENARIO, "DB INVALIDATION DETECTED. Halting and catching fire")
-            }
-            else -> logger.debug("Obtained change stream event with type ${doc.operationType.value}, ignoring")
         }
     }.launchIn(this)
+
+    eventHandler.collectIn(this)
 }
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
@@ -161,93 +179,63 @@ private suspend fun syncSubscriptions(
 }
 
 suspend fun maybeCreateSubscriptions(
+    streamerID: Long,
     document: Document,
     twitchClient: TwitchClient,
-    subscriptions: MongoCollection<Document>,
-    filter: (Long) -> Boolean
+    subscriptions: MongoCollection<Document>
 ) {
-    val streamerID = document.getString("streamer_id")?.toLong() ?: return
-    if (!filter(streamerID)) return
+    val onlineFilter = document {
+        append("user_id", streamerID)
+        append("type", "stream.online")
+    }
+    val offlineFilter = document {
+        append("user_id", streamerID)
+        append("type", "stream.offline")
+    }
 
-    coroutineScope {
-        val onlineFilter = document {
-            append("user_id", streamerID)
-            append("type", "stream.online")
+    tailrec suspend fun createSubscriptionTailrec(type: String, secret: String) {
+        val result = twitchClient.createSubscription(streamerID, type, secret)
+        if (result != null) {
+            subscriptions.insertSubscription(twitchClient.clientID, secret, result)
+            logger.info("Created subscription with type $type for user ID $streamerID")
+        } else {
+            delay(30000)
+            createSubscriptionTailrec(type, secret)
         }
-        val offlineFilter = document {
-            append("user_id", streamerID)
-            append("type", "stream.offline")
-        }
+    }
 
-        tailrec suspend fun createSubscriptionTailrec(type: String, secret: String) {
-            val result = twitchClient.createSubscription(streamerID, type, secret)
-            if (result != null) {
-                subscriptions.insertSubscription(twitchClient.clientID, secret, result)
-                logger.info("Created subscription with type $type for user ID $streamerID")
-            } else {
-                delay(30000)
-                createSubscriptionTailrec(type, secret)
-            }
-        }
+    if (subscriptions.countDocuments(onlineFilter) == 0L)
+        createSubscriptionTailrec("stream.online", generateSecret())
 
-        launch {
-            if (subscriptions.countDocuments(onlineFilter) == 0L)
-                createSubscriptionTailrec("stream.online", generateSecret())
-        }
-
-        launch {
-            val streamEndAction = document.getInteger("stream_end_action")
-            if (streamEndAction != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
-                createSubscriptionTailrec("stream.offline", generateSecret())
-            }
-        }
+    val streamEndAction = document.getInteger("stream_end_action")
+    if (streamEndAction != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
+        createSubscriptionTailrec("stream.offline", generateSecret())
     }
 }
 
-suspend fun maybeRemoveSubscriptions(
-    documentKey: BsonDocument,
-    twitchClient: TwitchClient,
-    database: DatabaseController,
-    filter: (Long) -> Boolean
-) {
-    val idBinary = try {
-        documentKey.getBinary("_id")
-    } catch (ex: BsonInvalidOperationException) {
-        logger.warn("Received removal change stream for document without a binary _id field. Ignoring")
-        return
+suspend fun maybeRemoveSubscriptions(streamerID: Long, twitchClient: TwitchClient, database: DatabaseController) {
+    val existingNotifications = database.notifications.find(Document("streamer_id", streamerID.toString()))
+
+    tailrec suspend fun removeSubscription(document: Document, subID: String) {
+        if (twitchClient.removeSubscription(subID)) {
+            database.subscriptions.deleteOne(document)
+            logger.info("Removed subscription with ID $subID")
+        } else {
+            // failed to remove subscription, try again in 30 seconds
+            delay(30000)
+            removeSubscription(document, subID)
+        }
     }
 
-    val streamerID = ByteBuffer.wrap(idBinary.data).long
-    if (!filter(streamerID)) return
-
-    coroutineScope {
-        val existingNotifications = database.notifications.find(Document("streamer_id", streamerID.toString()))
-
-        tailrec suspend fun removeSubscription(document: Document, subID: String) {
-            if (twitchClient.removeSubscription(subID)) {
-                database.subscriptions.deleteOne(document)
-                logger.info("Removed subscription with ID $subID")
-            } else {
-                // failed to remove subscription, try again in 30 seconds
-                delay(30000)
-                removeSubscription(document, subID)
-            }
+    when {
+        // if there are no notifications left for this streamer, delete all subscriptions for that user
+        existingNotifications.none() -> database.subscriptions.find(Document("user_id", streamerID)).forEach {
+            removeSubscription(it, it.getString("sub_id"))
         }
-
-        when {
-            // if there are no notifications left for this streamer, delete all subscriptions for that user
-            existingNotifications.none() -> launch {
-                database.subscriptions.find(Document("user_id", streamerID)).forEach {
-                    removeSubscription(it, it.getString("sub_id"))
-                }
+        // if there are notifications but none with stream_end_action, delete all offline subscriptions instead
+        existingNotifications.none { it.getInteger("stream_end_action") != 0 } ->
+            database.subscriptions.find(Document("user_id", streamerID).append("type", "stream.offline")).forEach {
+                removeSubscription(it, it.getString("sub_id"))
             }
-            // if there are notifications but none with stream_end_action, delete all offline subscriptions instead
-            existingNotifications.none { it.getInteger("stream_end_action") != 0 } -> launch {
-                database.subscriptions.find(Document("user_id", streamerID).append("type", "stream.offline")).forEach {
-                    removeSubscription(it, it.getString("sub_id"))
-                }
-            }
-            else -> Unit
-        }
     }
 }
