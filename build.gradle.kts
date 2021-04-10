@@ -5,11 +5,12 @@ plugins {
     kotlin("plugin.serialization") version "1.4.32"
     id("com.github.ben-manes.versions") version "0.38.0"
     id("com.github.johnrengelman.shadow") version "6.1.0"
+    id("com.palantir.docker") version "0.26.0"
     application
 }
 
 group = "io.streamcord"
-version = "indev"
+version = "1.0.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -24,7 +25,7 @@ dependencies {
 
     // Serialization
     implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.1.0")
-    implementation("com.charleskorn.kaml", "kaml", "0.29.0")
+    implementation("com.charleskorn.kaml", "kaml", "0.30.0")
 
     // DB
     implementation("org.mongodb", "mongodb-driver", "3.12.8")
@@ -68,4 +69,9 @@ tasks {
 application {
     @Suppress("DEPRECATED") // this has to be used for the time being to avoid pissing off shadowJar
     mainClassName = "io.streamcord.spyglass.AppKt"
+}
+
+docker {
+    name = "spyglass:v$version"
+    files(tasks.shadowJar.get().outputs)
 }
