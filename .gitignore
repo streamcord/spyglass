@@ -29,7 +29,6 @@ spyglass.yml
 
 # Test Docker Compose config
 docker-compose.yml
-Dockerfile
 
 # Justfile for test building and running
 justfile
