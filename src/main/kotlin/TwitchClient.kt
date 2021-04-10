@@ -8,6 +8,8 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -17,6 +19,7 @@ class TwitchClient private constructor(
     val clientID: ClientID, private val clientSecret: ClientSecret, private val callbackUri: String,
     private var accessTokenInfo: ResponseBody.AppAccessToken
 ) {
+    private val refetchTokenMutex = Mutex(locked = false)
     private var awaitingToken: CompletableDeferred<Unit>? = null
 
     tailrec suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
@@ -41,7 +44,7 @@ class TwitchClient private constructor(
         }
     }
 
-    suspend fun createSubscription(userID: Long, type: String, secret: String): SubscriptionData? {
+    tailrec suspend fun createSubscription(userID: Long, type: String, secret: String): SubscriptionData? {
         awaitingToken?.await()
 
         val condition = RequestBody.CreateSub.Condition(userID.toString())
@@ -59,6 +62,11 @@ class TwitchClient private constructor(
                 refetchToken()
                 createSubscription(userID, type, secret)
             }
+            response.status == HttpStatusCode.InternalServerError || response.status == HttpStatusCode.BadGateway -> {
+                logger.info("Failed to create subscription due to ${response.status}. Retrying in 30 seconds...")
+                delay(30000)
+                createSubscription(userID, type, secret)
+            }
             !response.status.isSuccess() -> {
                 logger.error("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
                 null
@@ -67,7 +75,7 @@ class TwitchClient private constructor(
         }
     }
 
-    suspend fun removeSubscription(subID: String): Boolean {
+    tailrec suspend fun removeSubscription(subID: String): Boolean {
         awaitingToken?.await()
 
         val response = httpClient.delete<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
@@ -81,8 +89,13 @@ class TwitchClient private constructor(
                 refetchToken()
                 removeSubscription(subID)
             }
+            response.status == HttpStatusCode.InternalServerError || response.status == HttpStatusCode.BadGateway -> {
+                logger.info("Failed to remove subscription due to ${response.status}. Retrying in 30 seconds...")
+                delay(30000)
+                removeSubscription(subID)
+            }
             !response.status.isSuccess() -> {
-                logger.error("Failed to delete subscription with ID $subID. Error ${response.readText()}")
+                logger.error("Failed to remove subscription with ID $subID. Error ${response.readText()}")
                 false
             }
             else -> true
@@ -96,16 +109,18 @@ class TwitchClient private constructor(
     }
 
     private suspend fun refetchToken() {
-        // if we're already awaiting a token, return immediately to rerun the request
-        if (awaitingToken != null) {
+        // if we're already awaiting a token refetch, return immediately
+        if (refetchTokenMutex.isLocked) {
             return
         }
 
-        logger.warn("Encountered 401 Unauthorized from Twitch, fetching new access token...")
-        awaitingToken = CompletableDeferred()
-        accessTokenInfo = httpClient.fetchAccessToken(clientID, clientSecret)
-        awaitingToken?.complete(Unit)
-        awaitingToken = null
+        refetchTokenMutex.withLock {
+            logger.warn("Encountered 401 Unauthorized from Twitch, fetching new access token...")
+            awaitingToken = CompletableDeferred()
+            accessTokenInfo = httpClient.fetchAccessToken(clientID, clientSecret)
+            awaitingToken?.complete(Unit)
+            awaitingToken = null
+        }
     }
 
     companion object {
