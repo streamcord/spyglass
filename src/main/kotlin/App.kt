@@ -3,8 +3,6 @@ package io.streamcord.spyglass
 import com.mongodb.client.MongoCollection
 import com.mongodb.client.model.changestream.OperationType
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.launchIn
 import org.bson.Document
 import org.bson.internal.Base64
 import org.tinylog.configuration.Configuration
@@ -79,24 +77,24 @@ suspend fun main() = coroutineScope {
         }
     }
 
-    database.notifications.watch("insert", "delete", "update", "replace", "invalidate") { doc ->
+    database.notifications.launchWatch(this, "insert", "delete", "update", "replace", "invalidate") { doc ->
         if (doc.operationType == OperationType.INVALIDATE) {
             logger.fatal(ExitCodes.WORST_CASE_SCENARIO, "DB INVALIDATION DETECTED. Halting and catching fire")
         }
 
         if (!doc.documentKey!!.isBinary("_id")) {
             logger.warn("Received change stream event for document without a binary _id field. Ignoring")
-            return@watch
+            return@launchWatch
         }
 
         val streamerID = when (doc.operationType) {
-            OperationType.INSERT -> doc.fullDocument!!.getString("streamer_id")?.toLong() ?: return@watch
+            OperationType.INSERT -> doc.fullDocument!!.getString("streamer_id")?.toLong() ?: return@launchWatch
             OperationType.DELETE, OperationType.UPDATE, OperationType.REPLACE ->
                 ByteBuffer.wrap(doc.documentKey!!.getBinary("_id").data).long
-            else -> return@watch
+            else -> return@launchWatch
         }
 
-        if (streamerID % workerTotal != workerIndex) return@watch
+        if (streamerID % workerTotal != workerIndex) return@launchWatch
 
         eventHandler.submitEvent(streamerID) {
             when (doc.operationType) {
@@ -119,7 +117,7 @@ suspend fun main() = coroutineScope {
                 else -> logger.debug("Obtained change stream event with type ${doc.operationType.value}, ignoring")
             }
         }
-    }.launchIn(this)
+    }
 
     eventHandler.collectIn(this)
 }
@@ -200,37 +198,29 @@ suspend fun maybeCreateSubscriptions(
         append("type", "stream.offline")
     }
 
-    tailrec suspend fun createSubscriptionTailrec(type: String, secret: String) {
-        val result = twitchClient.createSubscription(streamerID, type, secret)
-        if (result != null) {
-            subscriptions.insertSubscription(twitchClient.clientID, secret, result)
+    suspend fun createSubscription(type: String, secret: String) {
+        twitchClient.createSubscription(streamerID, type, secret)?.let {
+            subscriptions.insertSubscription(twitchClient.clientID, secret, it)
             logger.info("Created subscription with type $type for user ID $streamerID")
-        } else {
-            delay(30000)
-            createSubscriptionTailrec(type, secret)
         }
     }
 
     if (subscriptions.countDocuments(onlineFilter) == 0L)
-        createSubscriptionTailrec("stream.online", generateSecret())
+        createSubscription("stream.online", generateSecret())
 
     val streamEndAction = document.getInteger("stream_end_action")
     if (streamEndAction != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
-        createSubscriptionTailrec("stream.offline", generateSecret())
+        createSubscription("stream.offline", generateSecret())
     }
 }
 
 suspend fun maybeRemoveSubscriptions(streamerID: Long, twitchClient: TwitchClient, database: DatabaseController) {
     val existingNotifications = database.notifications.find(Document("streamer_id", streamerID.toString()))
 
-    tailrec suspend fun removeSubscription(document: Document, subID: String) {
+    suspend fun removeSubscription(document: Document, subID: String) {
         if (twitchClient.removeSubscription(subID)) {
             database.subscriptions.deleteOne(document)
             logger.info("Removed subscription with ID $subID")
-        } else {
-            // failed to remove subscription, try again in 30 seconds
-            delay(30000)
-            removeSubscription(document, subID)
         }
     }
 

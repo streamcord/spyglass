@@ -6,15 +6,16 @@ import com.mongodb.client.MongoDatabase
 import com.mongodb.client.model.Aggregates
 import com.mongodb.client.model.Filters
 import com.mongodb.client.model.changestream.ChangeStreamDocument
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import org.bson.BsonDocument
 import org.bson.Document
 
 class DatabaseController private constructor(
     val subscriptions: MongoCollection<Document>,
-    val notifications: MongoCollection<Document>,
+    val notifications: MongoCollection<Document>
 ) {
     companion object {
         fun create(config: AppConfig.Mongo): DatabaseController {
@@ -91,12 +92,26 @@ private fun setValues(first: Pair<String, Any?>, vararg extra: Pair<String, Any?
         extra.forEach { append(it.first, it.second) }
     })
 
-fun MongoCollection<Document>.watch(
+fun MongoCollection<Document>.launchWatch(
+    coroutineScope: CoroutineScope,
     vararg operationTypes: String,
     onEach: suspend (ChangeStreamDocument<Document>) -> Unit
-): Flow<ChangeStreamDocument<Document>> {
-    return watch(listOf(Aggregates.match(Filters.`in`("operationType", operationTypes.toList()))))
-        .asFlow()
-        .onEach { onEach(it) }
-        .catch { cause -> logger.warn("Exception in notifications change stream watch", cause) }
+) = coroutineScope.launch {
+    var resumeToken: BsonDocument? = null
+
+    while (true) {
+        try {
+            watch(listOf(Aggregates.match(Filters.`in`("operationType", operationTypes.toList()))))
+                .apply {
+                    resumeToken?.let { resumeAfter(it) }
+                }
+                .asFlow()
+                .collect {
+                    resumeToken = it.resumeToken
+                    onEach(it)
+                }
+        } catch (ex: Exception) {
+            logger.warn("Exception in notifications change stream watch", ex)
+        }
+    }
 }
