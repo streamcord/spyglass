@@ -14,7 +14,7 @@ private fun generateSecret() = Base64.encode(Random.nextBytes(32))
 internal lateinit var logger: SpyglassLogger
     private set
 
-suspend fun main() = coroutineScope {
+suspend fun main() = coroutineScope<Unit> {
     val workerIndex = System.getenv("SPYGLASS_WORKER_INDEX")?.toLongOrNull()
         ?: noEnv("No valid worker index found. Populate env variable SPYGLASS_WORKER_INDEX with the worker index.")
 
@@ -53,6 +53,7 @@ suspend fun main() = coroutineScope {
     syncSubscriptions(twitchClient, database.subscriptions) { it % workerTotal == workerIndex }
 
     val eventHandler = EventHandler(4, workerIndex, workerTotal)
+    eventHandler.collectIn(this)
 
     // find subscriptions without an associated notification and remove them
     database.subscriptions.find().forEach {
@@ -118,8 +119,6 @@ suspend fun main() = coroutineScope {
             }
         }
     }
-
-    eventHandler.collectIn(this)
 }
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
