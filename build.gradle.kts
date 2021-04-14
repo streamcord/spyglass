@@ -31,7 +31,7 @@ dependencies {
     implementation("org.mongodb", "mongodb-driver", "3.12.8")
 
     // MQ
-    implementation("com.rabbitmq", "amqp-client", "5.11.0")
+    implementation("com.rabbitmq", "amqp-client", "5.12.0")
 
     // Logging
     implementation("org.tinylog", "slf4j-tinylog", "2.2.1")
