@@ -92,6 +92,10 @@ private fun setValues(first: Pair<String, Any?>, vararg extra: Pair<String, Any?
         extra.forEach { append(it.first, it.second) }
     })
 
+/*
+ launches the watch operation as a flow and collects it in the passed coroutine scope. if an exception is caught, the
+ watch is restarted immediately from where it left off
+*/
 fun MongoCollection<Document>.launchWatch(
     coroutineScope: CoroutineScope,
     vararg operationTypes: String,
