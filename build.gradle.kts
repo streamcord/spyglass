@@ -72,6 +72,6 @@ application {
 }
 
 docker {
-    name = "spyglass:v$version"
+    name = "spyglass:$version"
     files(tasks.shadowJar.get().outputs)
 }
