@@ -20,7 +20,7 @@ import java.time.format.DateTimeFormatter
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-class TwitchServer(private val subscriptions: MongoCollection<Document>, private val sender: AmqpSender) {
+class TwitchServer(private val database: DatabaseController, private val sender: AmqpSender) {
     private val httpServer = embeddedServer(CIO, port = 8080) {
         routing {
             get("/") {
@@ -47,10 +47,10 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
             "webhook_callback_verification" -> {
                 val verificationBody = Json.safeDecodeFromString<CallbackVerificationBody>(text)
 
-                if (verifyRequest(subscriptions, verificationBody.subscription.id, text)) {
+                if (verifyRequest(database.subscriptions, verificationBody.subscription.id, text)) {
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
-                    subscriptions.verifySubscription(verificationBody.subscription.id, timestamp)?.let {
-                        subscriptions.updateSubscription(verificationBody.subscription.id, messageID)
+                    database.subscriptions.verifySubscription(verificationBody.subscription.id, timestamp)?.let {
+                        database.subscriptions.updateSubscription(verificationBody.subscription.id, messageID)
                         call.respond(HttpStatusCode.Accepted, verificationBody.challenge)
                         logger.info("Verified subscription with ID ${verificationBody.subscription.id}")
                     } ?: run {
@@ -64,11 +64,11 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
             "notification" -> {
                 val notification: TwitchNotification = Json.safeDecodeFromString(text)
 
-                if (verifyRequest(subscriptions, notification.subscription.id, text)) {
+                if (verifyRequest(database.subscriptions, notification.subscription.id, text)) {
                     logger.trace("Request verified, handling notification")
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
                     handleNotification(sender, timestamp, notification)
-                    subscriptions.updateSubscription(notification.subscription.id, messageID)
+                    database.subscriptions.updateSubscription(notification.subscription.id, messageID)
                     call.respond(HttpStatusCode.NoContent)
                 } else {
                     call.respond(HttpStatusCode.Unauthorized)
@@ -77,11 +77,11 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
             "revocation" -> {
                 val subscription = Json.safeDecodeFromString<RevocationBody>(text).subscription
 
-                if (verifyRequest(subscriptions, subscription.id, text)) {
+                if (verifyRequest(database.subscriptions, subscription.id, text)) {
                     logger.warn("Received revocation request from Twitch for subscription ID ${subscription.id}. Reason: ${subscription.status}")
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
-                    subscriptions.revokeSubscription(subscription.id, timestamp, subscription.status)
-                    subscriptions.updateSubscription(subscription.id, messageID)
+                    database.subscriptions.revokeSubscription(subscription.id, timestamp, subscription.status)
+                    database.subscriptions.updateSubscription(subscription.id, messageID)
                     call.respond(HttpStatusCode.NoContent)
                 } else {
                     call.respond(HttpStatusCode.Unauthorized)
@@ -91,12 +91,12 @@ class TwitchServer(private val subscriptions: MongoCollection<Document>, private
     }
 
     companion object {
-        fun create(subsCollection: MongoCollection<Document>, aqmpConfig: AppConfig.Amqp): TwitchServer {
+        fun create(database: DatabaseController, aqmpConfig: AppConfig.Amqp): TwitchServer {
             val sender = AmqpSender.create(aqmpConfig).getOrElse {
                 logger.fatal(ExitCodes.AMQP_CONNECTION_FAILED, "Failed to connect to AMQP queue")
             }
 
-            return TwitchServer(subsCollection, sender)
+            return TwitchServer(database, sender)
         }
 
         private fun nowInUtc() = ZonedDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT)

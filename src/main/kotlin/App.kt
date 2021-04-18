@@ -41,7 +41,7 @@ suspend fun main() = coroutineScope<Unit> {
     val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret, callbackUri)
     logger.debug("Created Twitch client with new access token. Expires in $expiresIn seconds")
 
-    TwitchServer.create(database.subscriptions, config.amqp).start()
+    TwitchServer.create(database, config.amqp).start()
 
     // synchronize subscriptions between DB and twitch
     syncSubscriptions(twitchClient, database.subscriptions) { workerInfo shouldHandle it }
