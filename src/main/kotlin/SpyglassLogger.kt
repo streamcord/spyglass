@@ -17,7 +17,7 @@ import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
 
 @Suppress("NOTHING_TO_INLINE") // inlined for callsite in tinylog
-class SpyglassLogger(private val workerIndex: Long, config: AppConfig.Logging) {
+class SpyglassLogger(private val workerInfo: WorkerInfo, config: AppConfig.Logging) {
     @OptIn(ExperimentalCoroutinesApi::class)
     internal val coroutineScope = CoroutineScope(newSingleThreadContext("SpyglassLogger"))
     internal val client = config.error_webhook?.let { LoggerClient(it) }
@@ -25,7 +25,7 @@ class SpyglassLogger(private val workerIndex: Long, config: AppConfig.Logging) {
     internal inline fun fatal(exitCode: Int, text: String, ex: Throwable? = null): Nothing {
         Logger.error(ex, text)
         runBlocking {
-            client?.postError(workerIndex, text, ex)
+            client?.postError(workerInfo.index, text, ex)
         }
         exitProcess(exitCode)
     }
@@ -33,14 +33,14 @@ class SpyglassLogger(private val workerIndex: Long, config: AppConfig.Logging) {
     internal inline fun error(text: String, ex: Throwable? = null) {
         Logger.error(ex, text)
         coroutineScope.launch {
-            client?.postError(workerIndex, text, ex)
+            client?.postError(workerInfo.index, text, ex)
         }
     }
 
     internal inline fun warn(text: String, ex: Throwable? = null) {
         Logger.warn(ex, text)
         coroutineScope.launch {
-            client?.postWarning(workerIndex, text, ex)
+            client?.postWarning(workerInfo.index, text, ex)
         }
     }
 

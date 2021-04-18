@@ -6,12 +6,12 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
-class EventHandler(private val numFlows: Int, private val workerIndex: Long, private val workerTotal: Long) {
+class EventHandler(private val numFlows: Int, private val workerInfo: WorkerInfo) {
     private val mutableSharedFlows = List(numFlows) { MutableSharedFlow<suspend () -> Unit>() }
 
     suspend fun submitEvent(streamerID: Long, task: suspend () -> Unit) {
-        if (streamerID % workerTotal != workerIndex) return
-        val eventHandlerIndex = ((streamerID - workerIndex) / workerTotal % numFlows).toInt()
+        if (workerInfo shouldNotHandle streamerID) return
+        val eventHandlerIndex = ((streamerID - workerInfo.index) / workerInfo.total % numFlows).toInt()
         mutableSharedFlows[eventHandlerIndex].emit(task)
     }
 

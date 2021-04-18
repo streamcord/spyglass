@@ -61,3 +61,23 @@ fun loadConfig(): AppConfig {
 
     return Yaml.default.decodeFromString(configFile.readText())
 }
+
+data class WorkerInfo(val index: Long, val total: Long) {
+    infix fun shouldHandle(userID: Long): Boolean = userID % total == index
+    infix fun shouldNotHandle(userID: Long): Boolean = !shouldHandle(userID)
+}
+
+fun fetchWorkerInfo(): WorkerInfo {
+    fun noEnv(message: String): Nothing {
+        System.err.println("Fatal error: $message")
+        exitProcess(ExitCodes.MISSING_ENV_VAR)
+    }
+
+    val workerIndex = System.getenv("SPYGLASS_WORKER_INDEX")?.toLongOrNull()
+        ?: noEnv("No valid worker index found. Populate env variable SPYGLASS_WORKER_INDEX with the worker index.")
+
+    val workerTotal = System.getenv("SPYGLASS_WORKER_TOTAL")?.toLongOrNull()
+        ?: noEnv("No valid worker total found. Populate env variable SPYGLASS_WORKER_TOTAL with the total number of workers.")
+
+    return WorkerInfo(workerIndex, workerTotal)
+}

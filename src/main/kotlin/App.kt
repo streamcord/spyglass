@@ -8,19 +8,13 @@ import org.bson.internal.Base64
 import org.tinylog.configuration.Configuration
 import java.nio.ByteBuffer
 import kotlin.random.Random
-import kotlin.system.exitProcess
 
 private fun generateSecret() = Base64.encode(Random.nextBytes(32))
 internal lateinit var logger: SpyglassLogger
     private set
 
 suspend fun main() = coroutineScope<Unit> {
-    val workerIndex = System.getenv("SPYGLASS_WORKER_INDEX")?.toLongOrNull()
-        ?: noEnv("No valid worker index found. Populate env variable SPYGLASS_WORKER_INDEX with the worker index.")
-
-    val workerTotal = System.getenv("SPYGLASS_WORKER_TOTAL")?.toLongOrNull()
-        ?: noEnv("No valid worker total found. Populate env variable SPYGLASS_WORKER_TOTAL with the total number of workers.")
-
+    val workerInfo = fetchWorkerInfo()
     val config = loadConfig()
 
     // set default logging level and format based on config
@@ -28,8 +22,8 @@ suspend fun main() = coroutineScope<Unit> {
     Configuration.set("writer.format", config.logging.format)
     Configuration.set("exception", "keep: io.streamcord")
 
-    logger = SpyglassLogger(workerIndex, config.logging)
-    logger.info("Config read. Starting up worker")
+    logger = SpyglassLogger(workerInfo, config.logging)
+    logger.info("Config read. Starting up worker ${workerInfo.index} of ${workerInfo.total}")
 
     // global error handler just in case
     Thread.setDefaultUncaughtExceptionHandler { t, e ->
@@ -38,9 +32,9 @@ suspend fun main() = coroutineScope<Unit> {
 
     val clientID = ClientID(config.twitch.client_id)
     val clientSecret = ClientSecret(config.twitch.client_secret)
-    val callbackUri = "$workerIndex.${config.twitch.base_callback}"
+    val callbackUri = "${workerInfo.index}.${config.twitch.base_callback}"
 
-    logger.info("Starting worker $workerIndex of $workerTotal with client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri.ansiBold}")
+    logger.info("Using client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri.ansiBold}")
 
     val database = DatabaseController.create(config.mongo)
 
@@ -50,9 +44,9 @@ suspend fun main() = coroutineScope<Unit> {
     TwitchServer.create(database.subscriptions, config.amqp).start()
 
     // synchronize subscriptions between DB and twitch
-    syncSubscriptions(twitchClient, database.subscriptions) { it % workerTotal == workerIndex }
+    syncSubscriptions(twitchClient, database.subscriptions) { workerInfo shouldHandle it }
 
-    val eventHandler = EventHandler(4, workerIndex, workerTotal)
+    val eventHandler = EventHandler(4, workerInfo)
     eventHandler.collectIn(this)
 
     // find subscriptions without an associated notification and remove them
@@ -95,7 +89,7 @@ suspend fun main() = coroutineScope<Unit> {
             else -> return@launchWatch
         }
 
-        if (streamerID % workerTotal != workerIndex) return@launchWatch
+        if (workerInfo shouldNotHandle streamerID) return@launchWatch
 
         eventHandler.submitEvent(streamerID) {
             when (doc.operationType) {
@@ -122,11 +116,6 @@ suspend fun main() = coroutineScope<Unit> {
 }
 
 private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
-
-private fun noEnv(message: String): Nothing {
-    System.err.println("Fatal error: $message")
-    exitProcess(ExitCodes.MISSING_ENV_VAR)
-}
 
 /**
  * Synchronizes subscriptions between Twitch and the database. If any subscriptions are reported by Twitch that aren't
