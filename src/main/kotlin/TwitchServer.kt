@@ -23,6 +23,9 @@ import javax.crypto.spec.SecretKeySpec
 class TwitchServer(private val subscriptions: MongoCollection<Document>, private val sender: AmqpSender) {
     private val httpServer = embeddedServer(CIO, port = 8080) {
         routing {
+            get("/") {
+                call.respond(HttpStatusCode.fromValue(418)) // not a teapot
+            }
             post("webhooks/callback") {
                 logger.trace("Request received")
                 handleCallback(call.receiveText())
