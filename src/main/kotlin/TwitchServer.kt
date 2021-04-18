@@ -24,7 +24,7 @@ class TwitchServer(private val database: DatabaseController, private val sender:
     private val httpServer = embeddedServer(CIO, port = 8080) {
         routing {
             get("/") {
-                call.respond(HttpStatusCode.fromValue(418)) // not a teapot
+                call.respond(rootHttpStatus) // not a teapot
             }
             post("webhooks/callback") {
                 logger.trace("Request received")
@@ -91,6 +91,8 @@ class TwitchServer(private val database: DatabaseController, private val sender:
     }
 
     companion object {
+        val rootHttpStatus = HttpStatusCode.fromValue(418) // not a teapot
+
         fun create(database: DatabaseController, aqmpConfig: AppConfig.Amqp): TwitchServer {
             val sender = AmqpSender.create(aqmpConfig).getOrElse {
                 logger.fatal(ExitCodes.AMQP_CONNECTION_FAILED, "Failed to connect to AMQP queue")

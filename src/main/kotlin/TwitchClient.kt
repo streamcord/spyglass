@@ -22,6 +22,26 @@ class TwitchClient private constructor(
     private val refetchTokenMutex = Mutex(locked = false)
     private var awaitingToken: CompletableDeferred<Unit>? = null
 
+    suspend fun awaitCallbackAccess(expectedStatus: HttpStatusCode) {
+        repeat(3) {
+            delay(5000)
+
+            val status = try {
+                httpClient.get<HttpResponse>("https://$callbackUri/").status
+            } catch (ex: Throwable) {
+                return@repeat logger.info("Attempt $it: Callback URI $callbackUri is inaccessible. When testing callback, an exception was thrown: ${ex.localizedMessage}")
+            }
+
+            if (status == expectedStatus) {
+                return logger.info("Verified that callback URI is accessible")
+            } else {
+                return@repeat logger.info("Attempt $it: Callback URI $callbackUri is inaccessible. Expected $expectedStatus, received $status")
+            }
+        }
+
+        logger.fatal(ExitCodes.INACCESSIBLE_CALLBACK, "Callback URI $callbackUri remained inaccessible after 3 connection attempts")
+    }
+
     tailrec suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
         awaitingToken?.await()
 
