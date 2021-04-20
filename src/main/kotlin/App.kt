@@ -69,7 +69,8 @@ suspend fun main() = coroutineScope<Unit> {
     database.notifications.find().forEach { doc ->
         val streamerID = doc.getString("streamer_id")?.toLong() ?: return@forEach
         eventHandler.submitEvent(streamerID) {
-            maybeCreateSubscriptions(streamerID, doc, twitchClient, database.subscriptions)
+            val streamEndAction = doc.getInteger("stream_end_action")
+            maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
         }
     }
 
@@ -93,23 +94,32 @@ suspend fun main() = coroutineScope<Unit> {
         eventHandler.submitEvent(streamerID) {
             when (doc.operationType) {
                 OperationType.INSERT -> {
-                    maybeCreateSubscriptions(streamerID, doc.fullDocument!!, twitchClient, database.subscriptions)
+                    val streamEndAction = doc.fullDocument!!.getInteger("stream_end_action")
+                    maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
                 }
                 OperationType.DELETE -> {
                     maybeRemoveSubscriptions(streamerID, twitchClient, database)
                 }
-                OperationType.UPDATE -> { // on update or replace, treat as delete then reinsert
+                OperationType.UPDATE, OperationType.REPLACE -> { // on update or replace, treat as delete then reinsert
                     maybeRemoveSubscriptions(streamerID, twitchClient, database)
-                    val docID = doc.documentKey!!.getBinary("_id")
-                    val updatedDoc = database.notifications.find(Document("_id", docID)).first()!!
-                    maybeCreateSubscriptions(streamerID, updatedDoc, twitchClient, database.subscriptions)
-                }
-                OperationType.REPLACE -> { // on replace, do the same thing as update, but don't look up the document
-                    maybeRemoveSubscriptions(streamerID, twitchClient, database)
-                    maybeCreateSubscriptions(streamerID, doc.fullDocument!!, twitchClient, database.subscriptions)
+                    val streamEndAction = doc.fullDocument!!.getInteger("stream_end_action")
+                    maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
                 }
                 else -> logger.debug("Obtained change stream event with type ${doc.operationType.value}, ignoring")
             }
+        }
+    }
+
+    // watch for revocation and handle accordingly
+    val filter =
+        Document.parse("{'updateDescription.updatedFields.revocation_reason': 'notification_failures_exceeded'}")
+
+    database.subscriptions.launchWatch(this, setOf(OperationType.UPDATE), filter) {
+        val userID = it.fullDocument!!.getLong("user_id")
+        eventHandler.submitEvent(userID) {
+            maybeRemoveSubscriptions(userID, twitchClient, database)
+            val streamEndAction = it.fullDocument!!.getInteger("stream_end_action")
+            maybeCreateSubscriptions(userID, streamEndAction, twitchClient, database.subscriptions)
         }
     }
 }
@@ -172,7 +182,7 @@ private suspend fun syncSubscriptions(
 
 suspend fun maybeCreateSubscriptions(
     streamerID: Long,
-    document: Document,
+    streamEndAction: Int,
     twitchClient: TwitchClient,
     subscriptions: MongoCollection<Document>
 ) {
@@ -195,7 +205,6 @@ suspend fun maybeCreateSubscriptions(
     if (subscriptions.countDocuments(onlineFilter) == 0L)
         createSubscription("stream.online", generateSecret())
 
-    val streamEndAction = document.getInteger("stream_end_action")
     if (streamEndAction != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
         createSubscription("stream.offline", generateSecret())
     }

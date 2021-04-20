@@ -82,6 +82,9 @@ class TwitchServer(private val database: DatabaseController, private val sender:
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
                     database.subscriptions.revokeSubscription(subscription.id, timestamp, subscription.status)
                     database.subscriptions.updateSubscription(subscription.id, messageID)
+                    if (subscription.status == "authorization_revoked" || subscription.status == "user_removed") {
+                        database.notifications.clearNotifications(subscription.condition.broadcaster_user_id)
+                    }
                     call.respond(HttpStatusCode.NoContent)
                 } else {
                     call.respond(HttpStatusCode.Unauthorized)

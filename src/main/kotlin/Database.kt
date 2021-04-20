@@ -6,6 +6,7 @@ import com.mongodb.client.MongoDatabase
 import com.mongodb.client.model.Aggregates
 import com.mongodb.client.model.Filters
 import com.mongodb.client.model.changestream.ChangeStreamDocument
+import com.mongodb.client.model.changestream.FullDocument
 import com.mongodb.client.model.changestream.OperationType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.bson.BsonDocument
 import org.bson.Document
+import org.bson.conversions.Bson
 
 class DatabaseController private constructor(
     val subscriptions: MongoCollection<Document>,
@@ -51,6 +53,10 @@ class DatabaseController private constructor(
     }
 }
 
+fun MongoCollection<Document>.clearNotifications(userID: Long) {
+    deleteMany(Document("streamer_id", userID.toString()))
+}
+
 fun MongoCollection<Document>.insertSubscription(clientID: ClientID, secret: String, data: SubscriptionData) {
     insertOne(document {
         append("client_id", clientID.value)
@@ -58,6 +64,8 @@ fun MongoCollection<Document>.insertSubscription(clientID: ClientID, secret: Str
         append("created_at", data.created_at)
         append("messages", listOf<String>())
         append("revoked", false)
+        append("revoked_at", null)
+        append("revocation_reason", null)
         append("secret", secret)
         append("type", data.type)
         append("user_id", data.condition.broadcaster_user_id)
@@ -102,17 +110,19 @@ private fun setValues(first: Pair<String, Any?>, vararg extra: Pair<String, Any?
 fun MongoCollection<Document>.launchWatch(
     coroutineScope: CoroutineScope,
     operationTypes: Set<OperationType>,
+    vararg additionalFilters: Bson,
     onEach: suspend (ChangeStreamDocument<Document>) -> Unit
 ) = coroutineScope.launch {
     val finalOperationTypes = (operationTypes + OperationType.INVALIDATE).map { it.value }
-    val aggregates = listOf(Aggregates.match(Filters.`in`("operationType", finalOperationTypes)))
+    val filters = Filters.and(Filters.`in`("operationType", finalOperationTypes), *additionalFilters)
+    val aggregates = listOf(Aggregates.match(filters))
 
     var resumeToken: BsonDocument? = null
     var invalidated = false
 
     while (true) {
         try {
-            val watch = watch(aggregates)
+            val watch = watch(aggregates).fullDocument(FullDocument.UPDATE_LOOKUP)
 
             resumeToken?.also {
                 if (!invalidated) watch.resumeAfter(it)
