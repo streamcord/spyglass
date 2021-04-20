@@ -73,11 +73,9 @@ suspend fun main() = coroutineScope<Unit> {
         }
     }
 
-    database.notifications.launchWatch(this, "insert", "delete", "update", "replace", "invalidate") { doc ->
-        if (doc.operationType == OperationType.INVALIDATE) {
-            logger.fatal(ExitCodes.WORST_CASE_SCENARIO, "DB INVALIDATION DETECTED. Halting and catching fire")
-        }
+    val opTypes = setOf(OperationType.INSERT, OperationType.REPLACE, OperationType.DELETE, OperationType.UPDATE)
 
+    database.notifications.launchWatch(this, opTypes) { doc ->
         if (!doc.documentKey!!.isBinary("_id")) {
             logger.warn("Received change stream event for document without a binary _id field. Ignoring")
             return@launchWatch

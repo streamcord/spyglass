@@ -6,7 +6,9 @@ import com.mongodb.client.MongoDatabase
 import com.mongodb.client.model.Aggregates
 import com.mongodb.client.model.Filters
 import com.mongodb.client.model.changestream.ChangeStreamDocument
+import com.mongodb.client.model.changestream.OperationType
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -94,28 +96,42 @@ private fun setValues(first: Pair<String, Any?>, vararg extra: Pair<String, Any?
 
 /*
  launches the watch operation as a flow and collects it in the passed coroutine scope. if an exception is caught, the
- watch is restarted immediately from where it left off
+ watch is restarted immediately from where it left off. If an invalidate event is received, the change stream is
+ restarted completely.
 */
 fun MongoCollection<Document>.launchWatch(
     coroutineScope: CoroutineScope,
-    vararg operationTypes: String,
+    operationTypes: Set<OperationType>,
     onEach: suspend (ChangeStreamDocument<Document>) -> Unit
 ) = coroutineScope.launch {
+    val finalOperationTypes = (operationTypes + OperationType.INVALIDATE).map { it.value }
+    val aggregates = listOf(Aggregates.match(Filters.`in`("operationType", finalOperationTypes)))
+
     var resumeToken: BsonDocument? = null
+    var invalidated = false
 
     while (true) {
         try {
-            watch(listOf(Aggregates.match(Filters.`in`("operationType", operationTypes.toList()))))
-                .apply {
-                    resumeToken?.let { resumeAfter(it) }
+            val watch = watch(aggregates)
+
+            resumeToken?.also {
+                if (!invalidated) watch.resumeAfter(it)
+                else watch.startAfter(it)
+            }
+
+            invalidated = false
+
+            watch.asFlow().collect {
+                resumeToken = it.resumeToken
+                if (it.operationType == OperationType.INVALIDATE) {
+                    invalidated = true
+                    throw IllegalStateException("Database received invalidate event, restarting change stream")
                 }
-                .asFlow()
-                .collect {
-                    resumeToken = it.resumeToken
-                    onEach(it)
-                }
+                onEach(it)
+            }
         } catch (ex: Exception) {
             logger.warn("Exception in notifications change stream watch", ex)
+            delay(5000)
         }
     }
 }

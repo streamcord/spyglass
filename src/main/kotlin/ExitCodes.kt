@@ -10,5 +10,4 @@ object ExitCodes {
     const val AMQP_CONNECTION_FAILED = 7
     const val INACCESSIBLE_CALLBACK = 8
     const val UNCAUGHT_ERROR = 255
-    const val WORST_CASE_SCENARIO = 666
 }
