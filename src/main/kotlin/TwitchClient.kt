@@ -70,6 +70,10 @@ class TwitchClient private constructor(
     }
 
     tailrec suspend fun createSubscription(userID: Long, type: String, secret: String): SubscriptionData? {
+        if (userID !in 0..Int.MAX_VALUE) {
+            logger.warn("Attempted to create subscription for invalid user ID $userID")
+            return null
+        }
         awaitingToken?.await()
 
         val condition = RequestBody.CreateSub.Condition(userID.toString())
