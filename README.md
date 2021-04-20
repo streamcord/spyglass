@@ -29,8 +29,8 @@ up first, then proceed to the next step.
 
 ### spyglass.yml
 
-Create a file in the same directory as the Spyglass jarfile named `spyglass.yml`. This file will contain the
-configuration Spyglass will use. It should be formatted as such:
+Create a file named `spyglass.yml`. This file will contain the configuration Spyglass will use. It should be formatted
+as such:
 
 ```yaml
 mongo:
@@ -142,6 +142,44 @@ message values for the **v1** format.
   "time": "2021-04-05T21:53:24.449161198Z"
 }
 ```
+
+## Running with Docker
+
+To run a Spyglass instance, additional steps must be taken to ensure that Spyglass has access to all necessary
+resources. For example, if it uses a local Docker network to connect to a reverse proxy/MongoDB instance/AMQP client,
+then this must be created first.
+
+Once you've built the container and performed the necessary setup, run the following command to start up a Spyglass
+worker:
+
+```shell
+$ sudo docker run \
+      --env SPYGLASS_WORKER_INDEX=0 \
+      --env SPYGLASS_WORKER_TOTAL=1 \
+      --volume "/PATH/TO/spyglass.yml:/var/app/spyglass.yml" \
+      spyglass:VERSION
+```
+
+You may need to set up additional environment variables to enable use of a reverse proxy or other local setups. For
+example, if running a single worker with a Dockerized nginx-proxy and acme-companion, with a base callback URL of
+eventsub.streamcord.io, the following command would be run:
+
+```shell
+$ sudo docker run \
+      --env SPYGLASS_WORKER_INDEX=0 \
+      --env SPYGLASS_WORKER_TOTAL=1 \
+      # explained in the Environment Variables section
+      --env VIRTUAL_HOST=0.eventsub.streamcord.io \
+      --env LETSENCRYPT_HOST=0.eventsub.streamcord.io \
+      --env VIRTUAL_PORT=8080 \
+      --expose 8080 \
+      --volume "/PATH/TO/spyglass.yml:/var/app/spyglass.yml" \
+      --network <NAME_OF_DOCKER_NETWORK> \
+      spyglass:1.0.0-SNAPSHOT
+```
+
+In this case, the nginx-proxy container would need access to the named docker network as well in order to redirect
+Spyglass requests properly.
 
 ## Copyright
 
