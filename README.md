@@ -17,10 +17,10 @@ Spyglass is currently in the pre-alpha phase of development, and has yet to be d
 First, install a JDK, version 11 or greater. Then:
 
 ```shell
-$ ./gradlew shadowJar
+$ ./gradlew docker
 ```
 
-This will create a file in the `build/libs` folder named `spyglass-indev-all.jar`.
+This will build Spyglass from scratch and create a Docker container named `spyglass` with a corresponding version.
 
 ## Setup
 
@@ -57,6 +57,19 @@ logging: # optional
   format: <tinylog log message format. See https://tinylog.org/v2/configuration/> # optional
   error_webhook: <Discord webhook URL to send warnings/errors to> # optional
 ```
+
+### Environment Variables
+
+Spyglass requires two environment variables to be set, `SPYGLASS_WORKER_INDEX` and `SPYGLASS_WORKER_TOTAL`. These
+variables allow for efficient load balancing by only handling a subset of notifications. `SPYGLASS_WORKER_INDEX` should
+be set to the index of the current worker, starting at 0, and `SPYGLASS_WORKER_TOTAL` should be the total number of
+workers.
+
+The application will create an HTTP server on port 8080, and will send `https://INDEX.BASE_CALLBACK` as the webhook
+event link to Twitch, where `BASE_CALLBACK` is provided in spyglass.yml and `INDEX` is the value
+of `SPYGLASS_WORKER_INDEX`. For example, if the base callback is set to "eventsub.streamcord.io" and the value
+of `SPYGLASS_WORKER_INDEX` is 2, then the URL sent to Twitch for event callbacks will
+be https://2.eventsub.streamcord.io.
 
 ### MongoDB
 
@@ -128,41 +141,6 @@ message values for the **v1** format.
   /* the UTC time at which this notification was received from Twitch */
   "time": "2021-04-05T21:53:24.449161198Z"
 }
-```
-
-## Running
-
-Spyglass requires two environment variables to be set, `SPYGLASS_WORKER_INDEX` and `SPYGLASS_WORKER_TOTAL`. These
-variables allow for efficient load balancing by only handling a subset of notifications. `SPYGLASS_WORKER_INDEX` should
-be set to the index of the current worker, starting at 0, and `SPYGLASS_WORKER_TOTAL` should be the total number of
-workers.
-
-The application will create an HTTP server on port 8080, and will send `https://INDEX.BASE_CALLBACK` as the webhook
-event link to Twitch, where `BASE_CALLBACK` is provided in `spyglass.yml` and `INDEX` is the value
-of `SPYGLASS_WORKER_INDEX`. For example, if the base callback is set to `eventsub.streamcord.io` and the value
-of `SPYGLASS_WORKER_INDEX` is 0, then the URL sent to Twitch for event callbacks will
-be https://0.eventsub.streamcord.io.
-
-### Running One Worker
-
-```shell
-$ export SPYGLASS_WORKER_INDEX=0
-$ export SPYGLASS_WORKER_TOTAL=1
-$ java -jar spyglass-indev-all.jar
-```
-
-### Running Two Workers
-
-```shell
-# in one shell
-$ export SPYGLASS_WORKER_INDEX=0
-$ export SPYGLASS_WORKER_TOTAL=2
-$ java -jar spyglass-indev-all.jar
-
-# in another shell
-$ export SPYGLASS_WORKER_INDEX=1
-$ export SPYGLASS_WORKER_TOTAL=2
-$ java -jar spyglass-indev-all.jar
 ```
 
 ## Copyright
