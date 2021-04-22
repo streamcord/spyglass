@@ -32,13 +32,12 @@ suspend fun main() = coroutineScope<Unit> {
 
     val clientID = ClientID(config.twitch.client_id)
     val clientSecret = ClientSecret(config.twitch.client_secret)
-    val callbackUri = "${workerInfo.index}.${config.twitch.base_callback}"
 
-    logger.info("Using client ID [${clientID.value.ansiBold}] and callback URI https://${callbackUri.ansiBold}")
+    logger.info("Using client ID [${clientID.value.ansiBold}] and callback URI https://${workerInfo.callback.ansiBold}")
 
     val database = DatabaseController.create(config.mongo)
 
-    val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret, callbackUri)
+    val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret, workerInfo.callback)
     logger.debug("Created Twitch client with new access token. Expires in $expiresIn seconds")
 
     TwitchServer.create(database, config.amqp).start()

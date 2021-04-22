@@ -24,9 +24,6 @@ This will build Spyglass from scratch and create a Docker container named `spygl
 
 ## Setup
 
-Spyglass, in its current state, requires connection to both a MongoDB replica set and an AMQP client. Set both of these
-up first, then proceed to the next step.
-
 ### spyglass.yml
 
 Create a file named `spyglass.yml`. This file will contain the configuration Spyglass will use. It should be formatted
@@ -43,7 +40,6 @@ mongo:
 twitch:
   client_id: <Twitch client ID, e.g. "yuk4id1awfrr5qkj5yh8qzlgpg66">
   client_secret: <Twitch client secret, e.g. "5j48e47jhzb55o7zainz7e7niist">
-  base_callback: <Webhook callback URL for EventSub notifications, e.g. "eventsub.streamcord.io">
 
 amqp:
   connection: <connection string, e.g. "localhost">
@@ -60,16 +56,12 @@ logging: # optional
 
 ### Environment Variables
 
-Spyglass requires two environment variables to be set, `SPYGLASS_WORKER_INDEX` and `SPYGLASS_WORKER_TOTAL`. These
-variables allow for efficient load balancing by only handling a subset of notifications. `SPYGLASS_WORKER_INDEX` should
-be set to the index of the current worker, starting at 0, and `SPYGLASS_WORKER_TOTAL` should be the total number of
-workers.
-
-The application will create an HTTP server on port 8080, and will send `https://INDEX.BASE_CALLBACK` as the webhook
-event link to Twitch, where `BASE_CALLBACK` is provided in spyglass.yml and `INDEX` is the value
-of `SPYGLASS_WORKER_INDEX`. For example, if the base callback is set to "eventsub.streamcord.io" and the value
-of `SPYGLASS_WORKER_INDEX` is 2, then the URL sent to Twitch for event callbacks will
-be https://2.eventsub.streamcord.io.
+Spyglass requires three environment variables to be set: `SPYGLASS_WORKER_INDEX`, `SPYGLASS_WORKER_TOTAL`,
+and `SPYGLASS_WORKER_CALLBACK`. These variables allow for efficient load balancing by only handling a subset of
+notifications. `SPYGLASS_WORKER_INDEX` should be set to the index of the current worker, starting at 0,
+and `SPYGLASS_WORKER_TOTAL` should be the total number of workers, starting at 1. `SPYGLASS_WORKER_CALLBACK` should be
+set to the URL where Spyglass will be opening its HTTP server, so that it can provide this URL to Twitch for
+notifications.
 
 ### MongoDB
 
@@ -103,7 +95,8 @@ doc_binary_id = Binary(streamer_id_bytes + oid_bytes)
 Spyglass exposes an HTTP server on port 8080 without SSL, and Twitch requires that any webhook callback URL for EventSub
 use port 443 with SSL. To bridge the gap, a reverse proxy service like Nginx or Apache can be used, along with a
 certificate provider. You may use your favorite reverse proxy if you wish, but if you're not sure, we
-recommend [`jrcs/letsencrypt-nginx-proxy-companion`](https://github.com/nginx-proxy/acme-companion).
+recommend [`nginxproxy/nginx-proxy`](https://github.com/nginx-proxy/nginx-proxy)
+and [`jrcs/letsencrypt-nginx-proxy-companion`](https://github.com/nginx-proxy/acme-companion).
 
 ### AMQP
 
@@ -150,12 +143,13 @@ resources. For example, if it uses a local Docker network to connect to a revers
 then this must be created first.
 
 Once you've built the container and performed the necessary setup, run the following command to start up a Spyglass
-worker:
+worker with a callback URL of eventsub.streamcord.io:
 
 ```shell
 $ sudo docker run \
       --env SPYGLASS_WORKER_INDEX=0 \
       --env SPYGLASS_WORKER_TOTAL=1 \
+      --env SPYGLASS_WORKER_CALLBACK=eventsub.streamcord.io \
       --volume "/PATH/TO/spyglass.yml:/var/app/spyglass.yml" \
       spyglass:VERSION
 ```
@@ -168,9 +162,10 @@ eventsub.streamcord.io, the following command would be run:
 $ sudo docker run \
       --env SPYGLASS_WORKER_INDEX=0 \
       --env SPYGLASS_WORKER_TOTAL=1 \
+      --env SPYGLASS_WORKER_CALLBACK=eventsub.streamcord.io \
       # explained in the Environment Variables section
-      --env VIRTUAL_HOST=0.eventsub.streamcord.io \
-      --env LETSENCRYPT_HOST=0.eventsub.streamcord.io \
+      --env VIRTUAL_HOST=eventsub.streamcord.io \
+      --env LETSENCRYPT_HOST=eventsub.streamcord.io \
       --env VIRTUAL_PORT=8080 \
       --expose 8080 \
       --volume "/PATH/TO/spyglass.yml:/var/app/spyglass.yml" \

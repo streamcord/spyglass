@@ -17,7 +17,7 @@ class AppConfig(val mongo: Mongo, val twitch: Twitch, val amqp: Amqp, val loggin
     }
 
     @Serializable
-    class Twitch(val client_id: String, val client_secret: String, val base_callback: String)
+    class Twitch(val client_id: String, val client_secret: String)
 
     @Serializable
     class Amqp(val connection: String, val queue: String, val authentication: Authentication?) {
@@ -49,7 +49,6 @@ fun loadConfig(): AppConfig {
                 twitch:
                   client_id: <Twitch client ID, e.g. "yuk4id1awfrr5qkj5yh8qzlgpg66">
                   client_secret: <Twitch client secret, e.g. "5j48e47jhzb55o7zainz7e7niist">
-                  base_callback: <Webhook callback URL for EventSub notifications, e.g. "eventsub.streamcord.io">
                 
                 amqp:
                   connection: <connection string, e.g. "localhost">
@@ -62,7 +61,7 @@ fun loadConfig(): AppConfig {
     return Yaml.default.decodeFromString(configFile.readText())
 }
 
-data class WorkerInfo(val index: Long, val total: Long) {
+data class WorkerInfo(val index: Long, val total: Long, val callback: String) {
     infix fun shouldHandle(userID: Long): Boolean = userID % total == index
     infix fun shouldNotHandle(userID: Long): Boolean = !shouldHandle(userID)
 }
@@ -79,5 +78,8 @@ fun fetchWorkerInfo(): WorkerInfo {
     val workerTotal = System.getenv("SPYGLASS_WORKER_TOTAL")?.toLongOrNull()
         ?: noEnv("No valid worker total found. Populate env variable SPYGLASS_WORKER_TOTAL with the total number of workers.")
 
-    return WorkerInfo(workerIndex, workerTotal)
+    val workerCallback = System.getenv("SPYGLASS_WORKER_CALLBACK")
+        ?: noEnv("No valid worker callback found. Populate env variable SPYGLASS_WORKER_CALLBACK with the URI to use for Twitch callbacks.")
+
+    return WorkerInfo(workerIndex, workerTotal, workerCallback)
 }
