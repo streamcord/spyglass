@@ -34,8 +34,8 @@ dependencies {
     implementation("com.rabbitmq", "amqp-client", "5.12.0")
 
     // Logging
-    implementation("org.tinylog", "slf4j-tinylog", "2.2.1")
-    implementation("org.tinylog", "tinylog-impl", "2.2.1")
+    implementation("org.tinylog", "slf4j-tinylog", "2.3.0")
+    implementation("org.tinylog", "tinylog-impl", "2.3.0")
 
     // Tests
     testImplementation(kotlin("test-junit5"))
