@@ -6,10 +6,12 @@ import kotlinx.coroutines.coroutineScope
 import org.bson.Document
 import org.bson.internal.Base64
 import org.tinylog.configuration.Configuration
+import java.net.URLEncoder
 import java.nio.ByteBuffer
+import java.nio.charset.Charset
 import kotlin.random.Random
 
-private fun generateSecret() = Base64.encode(Random.nextBytes(32))
+private fun generateSecret() = URLEncoder.encode(Base64.encode(Random.nextBytes(32)), Charset.defaultCharset())
 internal lateinit var logger: SpyglassLogger
     private set
 
