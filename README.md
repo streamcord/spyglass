@@ -176,6 +176,19 @@ $ sudo docker run \
 In this case, the nginx-proxy container would need access to the named docker network as well in order to redirect
 Spyglass requests properly.
 
+## Dependencies
+
+| Name                  | License     | Purpose                         |
+|-----------------------|-------------|---------------------------------|
+| kotlin                | Apache-2.0  | Language and standard library   |
+| ktor                  | Apache-2.0  | HTTP client and server          |
+| kotlinx.serialization | Apache-2.0  | JSON encoding and decoding      |
+| kaml                  | Apache-2.0  | YAML decoding                   |
+| mongo-java-driver     | Apache-2.0  | MongoDB collection manipulation |
+| rabbitmq-java-client  | Apache-2.0  | AMQP message sending            |
+| tinylog               | Apache-2.0  | Logging to console              |
+| junit5                | EPL-2.0     | Unit tests                      |
+
 ## Copyright
 
 Copyright © 2021 Streamcord, LLC
