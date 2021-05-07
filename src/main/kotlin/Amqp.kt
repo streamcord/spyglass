@@ -10,9 +10,9 @@ import java.io.IOException
 
 class AmqpSender private constructor(private val queueName: String, private val channel: Channel) {
     fun sendOnlineEvent(streamID: Long, userID: Long, timestamp: String) =
-        send(AmqpEvent.StreamOnline(userID, streamID, timestamp))
+        send(AmqpEvent.StreamOnline(userID.toString(), streamID.toString(), timestamp))
 
-    fun sendOfflineEvent(userID: Long, timestamp: String) = send(AmqpEvent.StreamOffline(userID, timestamp))
+    fun sendOfflineEvent(userID: Long, timestamp: String) = send(AmqpEvent.StreamOffline(userID.toString(), timestamp))
 
     private inline fun <reified T> send(obj: T) = sendText(Json.encodeToString(obj))
 
@@ -52,8 +52,8 @@ private sealed class AmqpEvent(@Required val op: Int) {
     val v = 1
 
     @Serializable
-    data class StreamOnline(val userID: Long, val streamID: Long, val time: String) : AmqpEvent(op = 1)
+    data class StreamOnline(val userID: String, val streamID: String, val time: String) : AmqpEvent(op = 1)
 
     @Serializable
-    data class StreamOffline(val userID: Long, val time: String) : AmqpEvent(op = 2)
+    data class StreamOffline(val userID: String, val time: String) : AmqpEvent(op = 2)
 }

@@ -115,9 +115,9 @@ message values for the **v1** format.
   "v": 1,
   "op": 1,
   /* the ID of the user whose stream just started */
-  "userID": 635369093,
+  "userID": "635369093",
   /* the new stream's ID */
-  "streamID": 41313216413,
+  "streamID": "41313216413",
   /* the UTC time at which this notification was received from Twitch */
   "time": "2021-04-05T21:51:51.337883107Z"
 }
@@ -130,7 +130,7 @@ message values for the **v1** format.
   "v": 1,
   "op": 2,
   /* the ID of the user whose stream just ended */
-  "userID": 635369093,
+  "userID": "635369093",
   /* the UTC time at which this notification was received from Twitch */
   "time": "2021-04-05T21:53:24.449161198Z"
 }
