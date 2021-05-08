@@ -131,9 +131,7 @@ private fun PipelineContext<Unit, ApplicationCall>.verifyRequest(
     val actualSignatureHeader = call.request.header("Twitch-Eventsub-Message-Signature")
 
     return if (expectedSignatureHeader != actualSignatureHeader) {
-        logger.warn("Received request to webhooks/callback that failed verification")
-        logger.warn("Expected signature header: $expectedSignatureHeader")
-        logger.warn("Actual signature header:   $actualSignatureHeader")
+        logger.warn("Received request to webhooks/callback that failed verification. Expected signature header: $expectedSignatureHeader. Actual signature header: $actualSignatureHeader")
         false
     } else true
 }
