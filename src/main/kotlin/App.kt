@@ -84,9 +84,9 @@ suspend fun main() = coroutineScope<Unit> {
         }
 
         val streamerID = when (doc.operationType) {
-            OperationType.INSERT -> doc.fullDocument!!.getString("streamer_id")?.toLong() ?: return@launchWatch
-            OperationType.DELETE, OperationType.UPDATE, OperationType.REPLACE ->
-                ByteBuffer.wrap(doc.documentKey!!.getBinary("_id").data).long
+            OperationType.INSERT, OperationType.UPDATE, OperationType.REPLACE ->
+                doc.fullDocument!!.getString("streamer_id")?.toLong() ?: return@launchWatch
+            OperationType.DELETE -> ByteBuffer.wrap(doc.documentKey!!.getBinary("_id").data).long
             else -> return@launchWatch
         }
 
