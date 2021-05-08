@@ -183,8 +183,11 @@ class TwitchClient private constructor(
     }
 }
 
-inline class ClientSecret(val value: String)
-inline class ClientID(val value: String)
+@JvmInline
+value class ClientSecret(val value: String)
+
+@JvmInline
+value class ClientID(val value: String)
 
 object ResponseBody {
     @Serializable
