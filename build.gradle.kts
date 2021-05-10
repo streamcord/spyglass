@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "io.streamcord"
-version = "1.0.0-RC3"
+version = "1.0.0-RC4"
 
 repositories {
     mavenCentral()

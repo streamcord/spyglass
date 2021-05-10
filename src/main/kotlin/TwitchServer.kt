@@ -58,7 +58,7 @@ class TwitchServer(private val database: DatabaseController, private val sender:
                         call.respond(HttpStatusCode.NotFound)
                     }
                 } else {
-                    call.respond(HttpStatusCode.Unauthorized)
+                    call.respond(HttpStatusCode.Forbidden)
                 }
             }
             "notification" -> {
@@ -114,7 +114,7 @@ private fun PipelineContext<Unit, ApplicationCall>.verifyRequest(
     text: String
 ): Boolean {
     val subscription = subsCollection.find(Document("sub_id", subID)).firstOrNull() ?: run {
-        logger.warn("Request failed verification: no sub ID $subID in database")
+        logger.info("Request failed verification: no sub ID $subID in database")
         return false
     }
 

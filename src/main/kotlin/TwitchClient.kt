@@ -7,6 +7,8 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -14,6 +16,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 
 class TwitchClient private constructor(
     val clientID: ClientID, private val clientSecret: ClientSecret, private val callbackUri: String,
@@ -21,6 +26,9 @@ class TwitchClient private constructor(
 ) {
     private val refetchTokenMutex = Mutex(locked = false)
     private var awaitingToken: CompletableDeferred<Unit>? = null
+
+    private val ratelimitMutex = Mutex(locked = false)
+    private var awaitingRatelimitReset: CompletableJob? = null
 
     suspend fun awaitCallbackAccess(expectedStatus: HttpStatusCode) {
         logger.info("Testing callback URI in 10 seconds...")
@@ -47,34 +55,50 @@ class TwitchClient private constructor(
         )
     }
 
-    tailrec suspend fun fetchExistingSubscriptions(): List<SubscriptionData> {
+    suspend fun fetchExistingSubscriptions(): List<SubscriptionData> = fetchExistingSubscriptions(mutableListOf(), null)
+
+    private tailrec suspend fun fetchExistingSubscriptions(
+        list: MutableList<SubscriptionData>,
+        cursor: String?
+    ): List<SubscriptionData> {
         awaitingToken?.await()
 
         val response = httpClient.get<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
+            cursor?.let { parameter("after", it) }
         }
 
         // if unauthorized, get a new access token and store it, then rerun the request
-        return when {
+        when {
             response.status == HttpStatusCode.Unauthorized -> {
                 refetchToken()
-                fetchExistingSubscriptions()
+                return fetchExistingSubscriptions(list, cursor)
             }
             !response.status.isSuccess() -> {
                 logger.error("Failed to fetch subscriptions from Twitch. Error ${response.status}. Attempting refetch in 30 seconds")
-                delay(30)
-                fetchExistingSubscriptions()
+                delay(30_000)
+                return fetchExistingSubscriptions(list, cursor)
             }
-            else -> Json.safeDecodeFromString<ResponseBody.GetSubs>(response.readText()).data
+        }
+
+        val body = Json.safeDecodeFromString<ResponseBody.GetSubs>(response.readText())
+        list.addAll(body.data)
+
+        return if (list.size >= body.total) {
+            logger.info("Total subscriptions: ${body.total}")
+            list
+        } else {
+            fetchExistingSubscriptions(list, body.pagination.getValue("cursor").jsonPrimitive.content)
         }
     }
 
-    tailrec suspend fun createSubscription(userID: Long, type: String, secret: String): SubscriptionData? {
+    tailrec suspend fun createSubscription(userID: Long, type: String, secret: String): List<SubscriptionData>? {
         if (userID !in 0..Int.MAX_VALUE) {
             logger.warn("Attempted to create subscription for invalid user ID $userID")
             return null
         }
         awaitingToken?.await()
+        awaitingRatelimitReset?.join()
 
         val condition = RequestBody.CreateSub.Condition(userID.toString())
         val transport = RequestBody.CreateSub.Transport("webhook", "https://$callbackUri/webhooks/callback", secret)
@@ -96,16 +120,23 @@ class TwitchClient private constructor(
                 delay(30000)
                 createSubscription(userID, type, secret)
             }
+            response.status == HttpStatusCode.TooManyRequests -> {
+                checkRatelimit(response.headers)
+                createSubscription(userID, type, secret)
+            }
             !response.status.isSuccess() -> {
                 logger.error("Failed to create subscription for user ID $userID with type $type. ${response.readText()}")
                 null
             }
-            else -> Json.safeDecodeFromString<ResponseBody.CreateSub>(response.readText()).data.first()
+            else -> Json.safeDecodeFromString<ResponseBody.CreateSub>(response.readText()).data.onEach {
+                logger.info("Created subscription with ID ${it.id} for user ID $userID and type $type")
+            }
         }
     }
 
     tailrec suspend fun removeSubscription(subID: String): Boolean {
         awaitingToken?.await()
+        awaitingRatelimitReset?.join()
 
         val response = httpClient.delete<HttpResponse>("https://api.twitch.tv/helix/eventsub/subscriptions") {
             withDefaults()
@@ -123,11 +154,18 @@ class TwitchClient private constructor(
                 delay(30000)
                 removeSubscription(subID)
             }
+            response.status == HttpStatusCode.TooManyRequests -> {
+                checkRatelimit(response.headers)
+                removeSubscription(subID)
+            }
             !response.status.isSuccess() -> {
                 logger.error("Failed to remove subscription with ID $subID. Error ${response.readText()}")
                 false
             }
-            else -> true
+            else -> {
+                logger.info("Removed subscription with ID $subID")
+                true
+            }
         }
     }
 
@@ -148,6 +186,22 @@ class TwitchClient private constructor(
             awaitingToken = CompletableDeferred()
             accessTokenInfo = httpClient.fetchAccessToken(clientID, clientSecret)
             awaitingToken?.complete(Unit)
+            awaitingToken = null
+        }
+    }
+
+    private suspend fun checkRatelimit(headers: Headers) {
+        if (ratelimitMutex.isLocked) {
+            return
+        }
+
+        ratelimitMutex.withLock {
+            val secs = headers["Ratelimit-Reset"]!!.toLong() - LocalDateTime.now().toEpochSecond(ZoneOffset.UTC)
+
+            awaitingRatelimitReset = Job()
+            logger.info("Hit rate limit for Twitch API, waiting $secs seconds...")
+            delay(secs * 1000)
+            awaitingRatelimitReset?.complete()
             awaitingToken = null
         }
     }
