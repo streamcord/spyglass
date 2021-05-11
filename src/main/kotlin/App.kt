@@ -1,17 +1,15 @@
 package io.streamcord.spyglass
 
 import com.mongodb.client.MongoCollection
+import com.mongodb.client.model.Projections
 import com.mongodb.client.model.changestream.OperationType
 import kotlinx.coroutines.coroutineScope
 import org.bson.Document
-import org.bson.internal.Base64
 import org.tinylog.configuration.Configuration
-import java.net.URLEncoder
 import java.nio.ByteBuffer
-import java.nio.charset.Charset
-import kotlin.random.Random
+import java.util.*
 
-private fun generateSecret() = URLEncoder.encode(Base64.encode(Random.nextBytes(32)), Charset.defaultCharset())
+private fun generateSecret() = UUID.randomUUID().toString()
 internal lateinit var logger: SpyglassLogger
     private set
 
@@ -45,17 +43,16 @@ suspend fun main() = coroutineScope<Unit> {
     TwitchServer.create(database, config.amqp).start()
     twitchClient.awaitCallbackAccess(TwitchServer.rootHttpStatus)
 
-    if (workerInfo.index == 0L) {
-        // synchronize subscriptions between DB and twitch
-        syncSubscriptions(twitchClient, database, removeFromDB = true)
-    }
+    // synchronize subscriptions between DB and twitch
+    syncSubscriptions(twitchClient, database, removeFromDB = true, workerInfo)
 
     val eventHandler = EventHandler(4, workerInfo)
     eventHandler.collectIn(this)
 
     // find subscriptions without an associated notification and remove them
     database.subscriptions.find()
-        .filter { workerInfo shouldHandle it.getLong("user_id") }
+        .filter(workerInfo.filterBy("user_id"))
+        .projection(Projections.include("user_id", "sub_id"))
         .forEach {
             val userID = it.getLong("user_id")
             val doc = Document("streamer_id", userID.toString())
@@ -73,6 +70,8 @@ suspend fun main() = coroutineScope<Unit> {
 
     database.notifications.find().forEach { doc ->
         val streamerID = doc.getString("streamer_id")?.toLong() ?: return@forEach
+        if (workerInfo shouldNotHandle streamerID) return@forEach
+
         eventHandler.submitEvent(streamerID) {
             val streamEndAction = doc.getInteger("stream_end_action")
             maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
@@ -139,30 +138,39 @@ private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
 private suspend fun syncSubscriptions(
     twitchClient: TwitchClient,
     database: DatabaseController,
-    removeFromDB: Boolean
+    removeFromDB: Boolean,
+    workerInfo: WorkerInfo
 ) {
-    val twitchSubscriptions = twitchClient.fetchExistingSubscriptions().associateBy { it.id }
+    val twitchSubscriptions = twitchClient.fetchExistingSubscriptions()
+        .filter { workerInfo shouldHandle it.condition.broadcaster_user_id }
+        .map { it.id }
+
     logger.info("Fetched existing subscriptions from Twitch. Count: ${twitchSubscriptions.size}")
 
-    val dbSubscriptions = database.subscriptions.find().associateBy { it.getString("sub_id") }
+    val dbSubscriptions = database.subscriptions.find()
+        .filter(workerInfo.filterBy("user_id"))
+        .projection(Projections.include("sub_id"))
+        .map { it.getString("sub_id") }
+        .toList()
+
     logger.info("Found existing subscriptions in DB. Count: ${dbSubscriptions.size}")
 
     val missingFromTwitch = dbSubscriptions
-        .filter { it.key !in twitchSubscriptions }
+        .filter { it !in twitchSubscriptions }
         .also { logger.info("Found ${it.size.ansiBold} subscriptions in DB that were not reported by Twitch") }
 
     val missingFromDB = twitchSubscriptions
-        .filter { it.key !in dbSubscriptions }
+        .filter { it !in dbSubscriptions }
         .also { logger.info("Received ${it.size.ansiBold} subscriptions from Twitch that were not in the DB") }
 
     if (removeFromDB) {
         missingFromTwitch
-            .onEach { database.subscriptions.findOneAndDelete(Document("sub_id", it.key)) }
+            .onEach { database.subscriptions.findOneAndDelete(Document("sub_id", it)) }
             .also { logger.info("Removed ${it.size.ansiBold} subscriptions from the DB that were not reported by Twitch") }
     }
 
     missingFromDB
-        .filter { twitchClient.removeSubscription(it.key) }
+        .filter { twitchClient.removeSubscription(it) }
         .also { logger.info("Removed ${it.size.ansiBold} subscriptions from Twitch that were not in the database") }
 }
 

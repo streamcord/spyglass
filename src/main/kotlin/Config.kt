@@ -1,6 +1,7 @@
 package io.streamcord.spyglass
 
 import com.charleskorn.kaml.Yaml
+import com.mongodb.client.model.Filters
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import java.io.File
@@ -64,6 +65,7 @@ fun loadConfig(): AppConfig {
 data class WorkerInfo(val index: Long, val total: Long, val callback: String) {
     infix fun shouldHandle(userID: Long): Boolean = userID % total == index
     infix fun shouldNotHandle(userID: Long): Boolean = !shouldHandle(userID)
+    fun filterBy(fieldName: String) = Filters.mod(fieldName, total, index)
 }
 
 fun fetchWorkerInfo(): WorkerInfo {

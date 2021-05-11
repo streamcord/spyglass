@@ -256,14 +256,14 @@ object ResponseBody {
     @Serializable
     data class GetSubs(
         val total: Long, val data: List<SubscriptionData>,
-        val limit: Long, val max_total_cost: Long, val total_cost: Long,
+        val limit: Long? = null, val max_total_cost: Long, val total_cost: Long,
         val pagination: JsonObject
     )
 
     @Serializable
     data class CreateSub(
         val data: List<SubscriptionData>,
-        val limit: Long,
+        val limit: Long? = null,
         val total: Long,
         val max_total_cost: Long,
         val total_cost: Long

@@ -28,7 +28,7 @@ class TwitchServer(private val database: DatabaseController, private val sender:
             }
             post("webhooks/callback") {
                 logger.trace("Request received")
-                handleCallback(call.receiveText())
+                handleCallback(call.receive())
             }
         }
     }
@@ -37,17 +37,19 @@ class TwitchServer(private val database: DatabaseController, private val sender:
         httpServer.start(wait = false)
     }
 
-    private suspend fun PipelineContext<Unit, ApplicationCall>.handleCallback(text: String) {
+    private suspend fun PipelineContext<Unit, ApplicationCall>.handleCallback(bytes: ByteArray) {
         val messageID = call.request.header("Twitch-Eventsub-Message-Id") ?: run {
             call.respond(HttpStatusCode.NotFound)
             return
         }
 
+        val text = bytes.decodeToString()
+
         when (call.request.header("Twitch-Eventsub-Message-Type")) {
             "webhook_callback_verification" -> {
                 val verificationBody = Json.safeDecodeFromString<CallbackVerificationBody>(text)
 
-                if (verifyRequest(database.subscriptions, verificationBody.subscription.id, text)) {
+                if (verifyRequest(database.subscriptions, verificationBody.subscription.id, bytes)) {
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
                     database.subscriptions.verifySubscription(verificationBody.subscription.id, timestamp)?.let {
                         database.subscriptions.updateSubscription(verificationBody.subscription.id, messageID)
@@ -64,7 +66,7 @@ class TwitchServer(private val database: DatabaseController, private val sender:
             "notification" -> {
                 val notification: TwitchNotification = Json.safeDecodeFromString(text)
 
-                if (verifyRequest(database.subscriptions, notification.subscription.id, text)) {
+                if (verifyRequest(database.subscriptions, notification.subscription.id, bytes)) {
                     logger.trace("Request verified, handling notification")
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
                     handleNotification(sender, timestamp, notification)
@@ -77,7 +79,7 @@ class TwitchServer(private val database: DatabaseController, private val sender:
             "revocation" -> {
                 val subscription = Json.safeDecodeFromString<RevocationBody>(text).subscription
 
-                if (verifyRequest(database.subscriptions, subscription.id, text)) {
+                if (verifyRequest(database.subscriptions, subscription.id, bytes)) {
                     logger.warn("Received revocation request from Twitch for subscription ID ${subscription.id}. Reason: ${subscription.status}")
                     val timestamp = call.request.header("Twitch-Eventsub-Message-Timestamp") ?: nowInUtc()
                     database.subscriptions.revokeSubscription(subscription.id, timestamp, subscription.status)
@@ -111,27 +113,48 @@ class TwitchServer(private val database: DatabaseController, private val sender:
 private fun PipelineContext<Unit, ApplicationCall>.verifyRequest(
     subsCollection: MongoCollection<Document>,
     subID: String,
-    text: String
+    bytes: ByteArray
 ): Boolean {
     val subscription = subsCollection.find(Document("sub_id", subID)).firstOrNull() ?: run {
         logger.info("Request failed verification: no sub ID $subID in database")
         return false
     }
 
+    val messageID = call.request.headers["Twitch-Eventsub-Message-Id"] ?: run {
+        logger.info("Request failed verification: no eventsub message ID attached")
+        return false
+    }
+
+    val messageTimestamp = call.request.headers["Twitch-Eventsub-Message-Timestamp"] ?: run {
+        logger.info("Request failed verification: no eventsub message timestamp attached")
+        return false
+    }
+
+    val actualSignatureHeader = call.request.header("Twitch-Eventsub-Message-Signature") ?: run {
+        logger.info("Request failed verification: no eventsub message signature attached")
+        return false
+    }
+
     val expectedSecret = subscription.getString("secret")
 
     val hmacMessage = call.request.headers.let {
-        it["Twitch-Eventsub-Message-Id"] + it["Twitch-Eventsub-Message-Timestamp"] + text
+        messageID.encodeToByteArray() + messageTimestamp.encodeToByteArray() + bytes
     }
 
     val secretKey = SecretKeySpec(expectedSecret.encodeToByteArray(), "HmacSHA256")
     val hMacSHA256 = Mac.getInstance("HmacSHA256").apply { init(secretKey) }
-    val expectedSignatureHeader =
-        "sha256=" + hMacSHA256.doFinal(hmacMessage.encodeToByteArray()).toHexString()
-    val actualSignatureHeader = call.request.header("Twitch-Eventsub-Message-Signature")
+    val expectedSignatureHeader = "sha256=" + hMacSHA256.doFinal(hmacMessage).toHexString()
 
     return if (expectedSignatureHeader != actualSignatureHeader) {
-        logger.warn("Received request to webhooks/callback that failed verification. Expected signature header: $expectedSignatureHeader. Actual signature header: $actualSignatureHeader")
+        logger.warn(
+            """Received request to webhooks/callback that failed verification
+               **Expected signature:** $expectedSignatureHeader
+               **Actual signature:**   $actualSignatureHeader
+               **Message ID:**         $messageID
+               **Message Timestamp:**  $messageTimestamp
+               **Secret:** $expectedSecret
+            """.trimIndent()
+        )
         false
     } else true
 }
