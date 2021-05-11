@@ -1,6 +1,7 @@
 # Spyglass
 
 [![Streamcord (Closed Beta)][streamcord-badge]](https://streamcord.io/twitch/)
+[![Docker Version][docker-badge]](https://hub.docker.com/repository/docker/serebit/spyglass)
 [![Discord][discord-guild-badge]](https://discord.com/invite/UNYzJqV)
 [![Boost License 1.0][github-license-badge]](https://www.boost.org/users/license.html)
 
@@ -20,7 +21,8 @@ First, install a JDK, version 11 or greater. Then:
 $ ./gradlew docker
 ```
 
-This will build Spyglass from scratch and create a Docker container named `spyglass` with a corresponding version.
+This will build Spyglass from scratch and create a Docker container named `serebit/spyglass` with a corresponding
+version.
 
 ## Setup
 
@@ -151,7 +153,7 @@ $ sudo docker run \
       --env SPYGLASS_WORKER_TOTAL=1 \
       --env SPYGLASS_WORKER_CALLBACK=eventsub.streamcord.io \
       --volume "/PATH/TO/spyglass.yml:/var/app/spyglass.yml" \
-      spyglass:VERSION
+      serebit/spyglass:VERSION
 ```
 
 You may need to set up additional environment variables to enable use of a reverse proxy or other local setups. For
@@ -170,7 +172,7 @@ $ sudo docker run \
       --expose 8080 \
       --volume "/PATH/TO/spyglass.yml:/var/app/spyglass.yml" \
       --network <NAME_OF_DOCKER_NETWORK> \
-      spyglass:1.0.0-SNAPSHOT
+      serebit/spyglass:VERSION
 ```
 
 In this case, the nginx-proxy container would need access to the named docker network as well in order to redirect
@@ -196,6 +198,8 @@ Copyright © 2021 Streamcord, LLC
 Distributed under the Boost Software License, Version 1.0.
 
 [streamcord-badge]: https://img.shields.io/badge/Streamcord-Closed_Beta-9146ff
+
+[docker-badge]: https://img.shields.io/docker/v/serebit/spyglass?label=docker%20version&sort=date
 
 [discord-guild-badge]: https://discordapp.com/api/guilds/294215057129340938/widget.png?style=shield "Discord Server"
 
