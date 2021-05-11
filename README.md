@@ -1,6 +1,6 @@
 # Spyglass
 
-[![Streamcord (In Development)][streamcord-badge]](https://streamcord.io/twitch/)
+[![Streamcord (Closed Beta)][streamcord-badge]](https://streamcord.io/twitch/)
 [![Discord][discord-guild-badge]](https://discord.com/invite/UNYzJqV)
 [![Boost License 1.0][github-license-badge]](https://www.boost.org/users/license.html)
 
@@ -10,7 +10,7 @@ and can serve as a reference for other implementations of EventSub.
 
 ## Status
 
-Spyglass is currently in the pre-alpha phase of development, and has yet to be deployed in production.
+Spyglass is currently being beta-tested by Streamcord partners and staff.
 
 ## Building
 
@@ -195,7 +195,7 @@ Copyright © 2021 Streamcord, LLC
 
 Distributed under the Boost Software License, Version 1.0.
 
-[streamcord-badge]: https://img.shields.io/badge/Streamcord-In_Development-9146ff
+[streamcord-badge]: https://img.shields.io/badge/Streamcord-Closed_Beta-9146ff
 
 [discord-guild-badge]: https://discordapp.com/api/guilds/294215057129340938/widget.png?style=shield "Discord Server"
 
