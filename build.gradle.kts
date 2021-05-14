@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "io.streamcord"
-version = "1.0.0"
+version = "1.0.1"
 
 repositories {
     mavenCentral()
@@ -23,8 +23,8 @@ dependencies {
     implementation(kotlin("reflect")) // for explicit v1.5
 
     // Serialization
-    implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.1.0")
-    implementation("com.charleskorn.kaml", "kaml", "0.31.0")
+    implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.2.1")
+    implementation("com.charleskorn.kaml", "kaml", "0.33.0")
 
     // DB
     implementation("org.mongodb", "mongodb-driver", "3.12.8")
