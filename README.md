@@ -2,7 +2,7 @@
 
 [![Streamcord (Closed Beta)][streamcord-badge]](https://streamcord.io/twitch/)
 [![Docker Version][docker-badge]](https://hub.docker.com/repository/docker/serebit/spyglass)
-[![Discord][discord-guild-badge]](https://discord.com/invite/UNYzJqV)
+[![Discord][discord-guild-badge]](https://discord.com/invite/streamcord)
 [![Boost License 1.0][github-license-badge]](https://www.boost.org/users/license.html)
 
 Spyglass is a microservice implementation of the Twitch EventSub API, designed to efficiently create and manage
