@@ -73,7 +73,7 @@ suspend fun main() = coroutineScope<Unit> {
         if (workerInfo shouldNotHandle streamerID) return@forEach
 
         eventHandler.submitEvent(streamerID) {
-            val streamEndAction = doc.getInteger("stream_end_action")
+            val streamEndAction: Int? = doc.getInteger("stream_end_action")
             maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
         }
     }
@@ -98,7 +98,7 @@ suspend fun main() = coroutineScope<Unit> {
         eventHandler.submitEvent(streamerID) {
             when (doc.operationType) {
                 OperationType.INSERT -> {
-                    val streamEndAction = doc.fullDocument!!.getInteger("stream_end_action")
+                    val streamEndAction: Int? = doc.fullDocument!!.getInteger("stream_end_action")
                     maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
                 }
                 OperationType.DELETE -> {
@@ -106,7 +106,7 @@ suspend fun main() = coroutineScope<Unit> {
                 }
                 OperationType.UPDATE, OperationType.REPLACE -> { // on update or replace, treat as delete then reinsert
                     maybeRemoveSubscriptions(streamerID, twitchClient, database)
-                    val streamEndAction = doc.fullDocument!!.getInteger("stream_end_action")
+                    val streamEndAction: Int? = doc.fullDocument!!.getInteger("stream_end_action")
                     maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
                 }
                 else -> logger.debug("Obtained change stream event with type ${doc.operationType.value}, ignoring")
@@ -122,7 +122,7 @@ suspend fun main() = coroutineScope<Unit> {
         val userID = it.fullDocument!!.getLong("user_id")
         eventHandler.submitEvent(userID) {
             maybeRemoveSubscriptions(userID, twitchClient, database)
-            val streamEndAction = it.fullDocument!!.getInteger("stream_end_action")
+            val streamEndAction: Int? = it.fullDocument!!.getInteger("stream_end_action")
             maybeCreateSubscriptions(userID, streamEndAction, twitchClient, database.subscriptions)
         }
     }
@@ -176,7 +176,7 @@ private suspend fun syncSubscriptions(
 
 suspend fun maybeCreateSubscriptions(
     streamerID: Long,
-    streamEndAction: Int,
+    streamEndAction: Int?,
     twitchClient: TwitchClient,
     subscriptions: MongoCollection<Document>
 ) {
@@ -198,7 +198,7 @@ suspend fun maybeCreateSubscriptions(
     if (subscriptions.countDocuments(onlineFilter) == 0L)
         createSubscription("stream.online", generateSecret())
 
-    if (streamEndAction != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
+    if (streamEndAction ?: 0 != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
         createSubscription("stream.offline", generateSecret())
     }
 }
@@ -218,7 +218,7 @@ suspend fun maybeRemoveSubscriptions(streamerID: Long, twitchClient: TwitchClien
             removeSubscription(it, it.getString("sub_id"))
         }
         // if there are notifications but none with stream_end_action, delete all offline subscriptions instead
-        existingNotifications.none { it.getInteger("stream_end_action") != 0 } ->
+        existingNotifications.none { it.getInteger("stream_end_action") ?: 0 != 0 } ->
             database.subscriptions.find(Document("user_id", streamerID).append("type", "stream.offline")).forEach {
                 removeSubscription(it, it.getString("sub_id"))
             }
