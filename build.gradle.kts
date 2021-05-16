@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "io.streamcord"
-version = "1.0.1"
+version = "1.0.2"
 
 repositories {
     mavenCentral()
@@ -67,6 +67,7 @@ application {
 }
 
 docker {
-    name = "serebit/spyglass:$version"
+    setDockerfile(rootProject.projectDir.resolve("Dockerfile.host"))
+    name = "streamcord/spyglass:$version"
     files(tasks.shadowJar.get().outputs)
 }

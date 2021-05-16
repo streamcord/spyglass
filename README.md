@@ -1,7 +1,7 @@
 # Spyglass
 
 [![Streamcord (Closed Beta)][streamcord-badge]](https://streamcord.io/twitch/)
-[![Docker Version][docker-badge]](https://hub.docker.com/repository/docker/serebit/spyglass)
+[![Docker Version][docker-badge]](https://hub.docker.com/repository/docker/streamcord/spyglass)
 [![Discord][discord-guild-badge]](https://discord.com/invite/streamcord)
 [![Boost License 1.0][github-license-badge]](https://www.boost.org/users/license.html)
 
@@ -15,14 +15,25 @@ Spyglass is currently being beta-tested by Streamcord partners and staff.
 
 ## Building
 
+### Single-Stage
+
 First, install a JDK, version 11 or greater. Then:
 
 ```shell
 $ ./gradlew docker
 ```
 
-This will build Spyglass from scratch and create a Docker container named `serebit/spyglass` with a corresponding
+This will build Spyglass from scratch and create a Docker container named `streamcord/spyglass` with a corresponding
 version.
+
+### Multi-Stage
+
+You can also use a multi-stage build, which doesn't require installing a JDK on your host. Run the following,
+replacing `VERSION` with the version of Spyglass you're building:
+
+```shell
+$ docker build -t streamcord/spyglass:VERSION .
+```
 
 ## Setup
 
@@ -153,7 +164,7 @@ $ sudo docker run \
       --env SPYGLASS_WORKER_TOTAL=1 \
       --env SPYGLASS_WORKER_CALLBACK=eventsub.streamcord.io \
       --volume "/PATH/TO/spyglass.yml:/var/app/spyglass.yml" \
-      serebit/spyglass:VERSION
+      streamcord/spyglass:VERSION
 ```
 
 You may need to set up additional environment variables to enable use of a reverse proxy or other local setups. For
@@ -172,7 +183,7 @@ $ sudo docker run \
       --expose 8080 \
       --volume "/PATH/TO/spyglass.yml:/var/app/spyglass.yml" \
       --network <NAME_OF_DOCKER_NETWORK> \
-      serebit/spyglass:VERSION
+      streamcord/spyglass:VERSION
 ```
 
 In this case, the nginx-proxy container would need access to the named docker network as well in order to redirect
@@ -199,7 +210,7 @@ Distributed under the Boost Software License, Version 1.0.
 
 [streamcord-badge]: https://img.shields.io/badge/Streamcord-Closed_Beta-9146ff
 
-[docker-badge]: https://img.shields.io/docker/v/serebit/spyglass?label=docker%20version&sort=date
+[docker-badge]: https://img.shields.io/docker/v/streamcord/spyglass?label=docker%20version&sort=date
 
 [discord-guild-badge]: https://discordapp.com/api/guilds/294215057129340938/widget.png?style=shield "Discord Server"
 
