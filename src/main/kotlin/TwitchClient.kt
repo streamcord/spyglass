@@ -39,7 +39,7 @@ class TwitchClient private constructor(
             val status = try {
                 httpClient.get<HttpResponse>("https://$callbackUri/") { expectSuccess = false }.status
             } catch (ex: Throwable) {
-                return@repeat logger.info("Attempt $it: Callback URI $callbackUri is inaccessible. When testing callback, an exception was thrown: ${ex.localizedMessage}")
+                return@repeat logger.info("Attempt $it: Callback URI $callbackUri is inaccessible. When testing callback, an exception was thrown: ${ex.stackTraceToString()}")
             }
 
             if (status == expectedStatus) {
