@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.0.2 (2021-05-16)
+
+### Changed
+
+- Docker coordinates changed to `streamcord/spyglass`
+- Changed Dockerfile to multi-stage build and moved original Dockerfile to Dockerfile.host
+
+### Fixed
+
+- Now tolerates a null value for `stream_end_action` in notification documents (defaults to 0)
+- Prints a stack trace rather than a possibly-null localized message if the initial connection attempt fails
+
 ## v1.0.1 (2021-05-14)
 
 ### Updated
