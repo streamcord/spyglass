@@ -5,7 +5,7 @@
 [![Discord][discord-guild-badge]](https://discord.com/invite/streamcord)
 [![Boost License 1.0][github-license-badge]](https://www.boost.org/users/license.html)
 
-<p align="center"><img src="./spyglass.png" /></p>
+<p align="center"><img src="./spyglass.png" width="300" /></p>
 
 Spyglass is a microservice implementation of the Twitch EventSub API, designed to efficiently create and manage
 subscriptions. It's currently being developed for use with Streamcord, but could be adapted for use with other services,
