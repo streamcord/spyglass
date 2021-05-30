@@ -37,7 +37,7 @@ dependencies {
 
     // Tests
     testImplementation(kotlin("test-junit5"))
-    testImplementation("org.junit.jupiter", "junit-jupiter", "5.7.0")
+    testImplementation("org.junit.jupiter", "junit-jupiter", "5.7.2")
 }
 
 kotlin.sourceSets["main"].languageSettings.apply {
