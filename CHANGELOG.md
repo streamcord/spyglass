@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.0.3 (2021-05-30)
+
+## Changed
+
+- Base Docker image from `openjdk:16-alpine` to `adoptopenjdk:11-jre-hotspot`, both for consistent security updates and
+  a smaller storage/memory footprint
+
+## Updated
+
+- kotlin v1.5.0 -> v1.5.10
+- ktor v1.5.4 -> v1.6.0
+- kaml v0.33.0 -> v0.34.0
+- junit-jupiter v5.7.0 -> v5.7.2
+
 ## v1.0.2 (2021-05-16)
 
 ### Changed
