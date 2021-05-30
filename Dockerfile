@@ -5,10 +5,10 @@ COPY ./ /var/build
 
 RUN gradle shadowJar --no-daemon
 
-FROM openjdk:16-jdk-alpine
+FROM adoptopenjdk:11-jre-hotspot
 
 ENV APPLICATION_USER ktor
-RUN adduser -D -g '' $APPLICATION_USER
+RUN adduser --system $APPLICATION_USER
 
 RUN mkdir /var/app
 RUN chown -R $APPLICATION_USER /var/app
