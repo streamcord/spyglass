@@ -59,6 +59,11 @@ tasks {
             exclude(dependency("org.tinylog:.*:.*"))
         } // remove unused symbols from the fat JAR
     }
+
+    dependencyUpdates {
+        val regex = "(RC\\d*|M\\d+)".toRegex() // match milestones and release candidates
+        rejectVersionIf { regex in candidate.version }
+    }
 }
 
 application {
