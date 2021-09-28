@@ -1,4 +1,4 @@
-FROM gradle:7.0.2-jdk11
+FROM gradle:7.2-jdk11
 
 WORKDIR /var/build
 COPY ./ /var/build
