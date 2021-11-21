@@ -1,11 +1,11 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.5.31"
-    kotlin("plugin.serialization") version "1.5.31"
+    kotlin("jvm") version "1.6.0"
+    kotlin("plugin.serialization") version "1.6.0"
     id("com.github.ben-manes.versions") version "0.39.0"
-    id("com.github.johnrengelman.shadow") version "7.0.0"
-    id("com.palantir.docker") version "0.29.0"
+    id("com.github.johnrengelman.shadow") version "7.1.0"
+    id("com.palantir.docker") version "0.30.0"
     application
 }
 
@@ -18,18 +18,18 @@ repositories {
 
 dependencies {
     // HTTP Server and Client
-    implementation("io.ktor", "ktor-server-cio", "1.6.3")
-    implementation("io.ktor", "ktor-client-java", "1.6.3")
+    implementation("io.ktor", "ktor-server-cio", "1.6.5")
+    implementation("io.ktor", "ktor-client-java", "1.6.5")
 
     // Serialization
-    implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.3.0")
-    implementation("com.charleskorn.kaml", "kaml", "0.36.0")
+    implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.3.1")
+    implementation("com.charleskorn.kaml", "kaml", "0.37.0")
 
     // DB
     implementation("org.mongodb", "mongodb-driver", "3.12.10")
 
     // MQ
-    implementation("com.rabbitmq", "amqp-client", "5.13.1")
+    implementation("com.rabbitmq", "amqp-client", "5.14.0")
 
     // Logging
     implementation("org.tinylog", "slf4j-tinylog", "2.3.2")
@@ -41,7 +41,7 @@ dependencies {
 }
 
 kotlin.sourceSets["main"].languageSettings.apply {
-    useExperimentalAnnotation("kotlin.RequiresOptIn")
+    optIn("kotlin.RequiresOptIn")
 }
 
 tasks {
@@ -61,7 +61,7 @@ tasks {
     }
 
     dependencyUpdates {
-        val regex = "(RC\\d*|M\\d+)".toRegex() // match milestones and release candidates
+        val regex = "(RC\\d*|M\\d+|rc\\d*)".toRegex() // match milestones and release candidates
         rejectVersionIf { regex in candidate.version }
     }
 }
