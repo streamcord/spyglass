@@ -141,11 +141,19 @@ private suspend fun syncSubscriptions(
     removeFromDB: Boolean,
     workerInfo: WorkerInfo
 ) {
-    val twitchSubscriptions = twitchClient.fetchExistingSubscriptions()
-        .filter { workerInfo shouldHandle it.condition.broadcaster_user_id }
-        .map { it.id }
+    val (allTwitchSubscriptions, workerTwitchSubscriptions) = twitchClient.fetchExistingSubscriptions().let { subs ->
+        val workerOnly = subs
+            .filter { workerInfo shouldHandle it.condition.broadcaster_user_id }
+            .map { it.id }
 
-    logger.info("Fetched existing subscriptions from Twitch. Count: ${twitchSubscriptions.size}")
+        subs.map { it.id } to workerOnly
+    }
+
+    logger.info("Fetched existing subscriptions from Twitch. Total: ${allTwitchSubscriptions.size}, Worker: ${workerTwitchSubscriptions.size}")
+
+    val allDBSubscriptions = database.subscriptions.find()
+        .map { it.getString("sub_id") }
+        .toList()
 
     val dbSubscriptions = database.subscriptions.find()
         .filter(workerInfo.filterBy("user_id"))
@@ -156,11 +164,11 @@ private suspend fun syncSubscriptions(
     logger.info("Found existing subscriptions in DB. Count: ${dbSubscriptions.size}")
 
     val missingFromTwitch = dbSubscriptions
-        .filter { it !in twitchSubscriptions }
+        .filter { it !in allTwitchSubscriptions }
         .also { logger.info("Found ${it.size.ansiBold} subscriptions in DB that were not reported by Twitch") }
 
-    val missingFromDB = twitchSubscriptions
-        .filter { it !in dbSubscriptions }
+    val missingFromDB = workerTwitchSubscriptions
+        .filter { it !in allDBSubscriptions }
         .also { logger.info("Received ${it.size.ansiBold} subscriptions from Twitch that were not in the DB") }
 
     if (removeFromDB) {
@@ -198,7 +206,7 @@ suspend fun maybeCreateSubscriptions(
     if (subscriptions.countDocuments(onlineFilter) == 0L)
         createSubscription("stream.online", generateSecret())
 
-    if (streamEndAction ?: 0 != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
+    if ((streamEndAction ?: 0) != 0 && subscriptions.countDocuments(offlineFilter) == 0L) {
         createSubscription("stream.offline", generateSecret())
     }
 }
