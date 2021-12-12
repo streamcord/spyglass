@@ -18,7 +18,7 @@ class AppConfig(val mongo: Mongo, val twitch: Twitch, val amqp: Amqp, val loggin
     }
 
     @Serializable
-    class Twitch(val client_id: String, val client_secret: String)
+    class Twitch(val proxy: String, val client_id: String, val auth_token: String)
 
     @Serializable
     class Amqp(val connection: String, val queue: String, val authentication: Authentication?) {
@@ -48,8 +48,9 @@ fun loadConfig(): AppConfig {
                     notifications: <name of collection, e.g. "notifications">
                 
                 twitch:
-                  client_id: <Twitch client ID, e.g. "yuk4id1awfrr5qkj5yh8qzlgpg66">
-                  client_secret: <Twitch client secret, e.g. "5j48e47jhzb55o7zainz7e7niist">
+                  proxy: <Base proxy URL, e.g. "http://localhost:8181">
+                  client_id: <Proxy client ID, e.g. "main">
+                  auth_token: <Proxy auth token, e.g. "Password123">
                 
                 amqp:
                   connection: <connection string, e.g. "localhost">

@@ -30,15 +30,15 @@ suspend fun main() = coroutineScope<Unit> {
         logger.fatal(ExitCodes.UNCAUGHT_ERROR, "Fatal uncaught error in thread $t", e)
     }
 
+    val proxy = config.twitch.proxy
     val clientID = ClientID(config.twitch.client_id)
-    val clientSecret = ClientSecret(config.twitch.client_secret)
+    val authToken = AuthToken(config.twitch.auth_token)
 
-    logger.info("Using client ID [${clientID.value.ansiBold}] and callback URI https://${workerInfo.callback.ansiBold}")
+    logger.info("Using proxy $proxy, client ID [${clientID.value.ansiBold}] and callback URI ${workerInfo.callback.ansiBold}")
 
     val database = DatabaseController.create(config.mongo)
 
-    val (twitchClient, expiresIn) = TwitchClient.create(clientID, clientSecret, workerInfo.callback)
-    logger.debug("Created Twitch client with new access token. Expires in $expiresIn seconds")
+    val twitchClient = TwitchClient.create(proxy, clientID, authToken, workerInfo.callback)
 
     TwitchServer.create(database, config.amqp).start()
     twitchClient.awaitCallbackAccess(TwitchServer.rootHttpStatus)
