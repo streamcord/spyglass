@@ -8,6 +8,7 @@ import org.bson.Document
 import org.tinylog.configuration.Configuration
 import java.nio.ByteBuffer
 import java.util.*
+import kotlin.system.measureTimeMillis
 
 private fun generateSecret() = UUID.randomUUID().toString()
 internal lateinit var logger: SpyglassLogger
@@ -44,33 +45,34 @@ suspend fun main() = coroutineScope<Unit> {
     twitchClient.awaitCallbackAccess(TwitchServer.rootHttpStatus)
 
     // synchronize subscriptions between DB and twitch
-    syncSubscriptions(twitchClient, database, removeFromDB = true, workerInfo)
+    val dbSubscriptions: List<Document>
+    val syncTime = measureTimeMillis {
+        dbSubscriptions = syncSubscriptions(twitchClient, database, removeFromDB = true, workerInfo)
+    }
+    logger.info("Synced subscriptions in $syncTime ms")
 
     val eventHandler = EventHandler(4, workerInfo)
     eventHandler.collectIn(this)
 
     // find subscriptions without an associated notification and remove them
-    database.subscriptions.find()
-        .filter(workerInfo.filterBy("user_id"))
-        .projection(Projections.include("user_id", "sub_id"))
-        .forEach {
-            val userID = it.getLong("user_id")
-            val doc = Document("streamer_id", userID.toString())
+    dbSubscriptions.forEach {
+        val userID = it.getLong("user_id")
+        val doc = Document("streamer_id", userID.toString())
 
+        eventHandler.submitEvent(userID) {
             if (database.notifications.countDocuments(doc) == 0L) {
                 val subID = it.getString("sub_id")
                 logger.info("Subscription with ID $subID has no associated notifications, attempting removal")
-                eventHandler.submitEvent(userID) {
-                    if (twitchClient.removeSubscription(subID)) {
-                        database.subscriptions.deleteOne(it)
-                    }
+                if (twitchClient.removeSubscription(subID)) {
+                    database.subscriptions.deleteOne(it)
                 }
             }
         }
+    }
+        .also { logger.info("Finished removing subscriptions without associated notifications") }
 
-    database.notifications.find().forEach { doc ->
+    dbSubscriptions.forEach { doc ->
         val streamerID = doc.getString("streamer_id")?.toLong() ?: return@forEach
-        if (workerInfo shouldNotHandle streamerID) return@forEach
 
         eventHandler.submitEvent(streamerID) {
             val streamEndAction: Int? = doc.getInteger("stream_end_action")
@@ -89,6 +91,7 @@ suspend fun main() = coroutineScope<Unit> {
         val streamerID = when (doc.operationType) {
             OperationType.INSERT, OperationType.UPDATE, OperationType.REPLACE ->
                 doc.fullDocument!!.getString("streamer_id")?.toLong() ?: return@launchWatch
+
             OperationType.DELETE -> ByteBuffer.wrap(doc.documentKey!!.getBinary("_id").data).long
             else -> return@launchWatch
         }
@@ -101,14 +104,17 @@ suspend fun main() = coroutineScope<Unit> {
                     val streamEndAction: Int? = doc.fullDocument!!.getInteger("stream_end_action")
                     maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
                 }
+
                 OperationType.DELETE -> {
                     maybeRemoveSubscriptions(streamerID, twitchClient, database)
                 }
+
                 OperationType.UPDATE, OperationType.REPLACE -> { // on update or replace, treat as delete then reinsert
                     maybeRemoveSubscriptions(streamerID, twitchClient, database)
                     val streamEndAction: Int? = doc.fullDocument!!.getInteger("stream_end_action")
                     maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
                 }
+
                 else -> logger.debug("Obtained change stream event with type ${doc.operationType.value}, ignoring")
             }
         }
@@ -134,13 +140,17 @@ private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
  * Synchronizes subscriptions between Twitch and the database. If any subscriptions are reported by Twitch that aren't
  * in the database, they are added to the database. If any subscriptions are in the database that weren't reported by
  * Twitch, they are recreated and replaced in the database.
+ *
+ * Returns a list of subscriptions managed by this worker.
+ *
+ * Each document contains three fields: stream_end_action, sub_id, and user_id.
  */
 private suspend fun syncSubscriptions(
     twitchClient: TwitchClient,
     database: DatabaseController,
     removeFromDB: Boolean,
     workerInfo: WorkerInfo
-) {
+): List<Document> {
     val (allTwitchSubscriptions, workerTwitchSubscriptions) = twitchClient.fetchExistingSubscriptions().let { subs ->
         val workerOnly = subs
             .filter { workerInfo shouldHandle it.condition.broadcaster_user_id }
@@ -151,15 +161,20 @@ private suspend fun syncSubscriptions(
 
     logger.info("Fetched existing subscriptions from Twitch. Total: ${allTwitchSubscriptions.size}, Worker: ${workerTwitchSubscriptions.size}")
 
-    val allDBSubscriptions = database.subscriptions.find()
-        .map { it.getString("sub_id") }
-        .toList()
+    val subscriptionsQuery: List<Document>
+    val executionTime = measureTimeMillis {
+        subscriptionsQuery = database.subscriptions.find()
+            .projection(Projections.include("stream_end_action", "sub_id", "user_id"))
+            .toList()
+    }
 
-    val dbSubscriptions = database.subscriptions.find()
-        .filter(workerInfo.filterBy("user_id"))
-        .projection(Projections.include("sub_id"))
-        .map { it.getString("sub_id") }
-        .toList()
+    logger.info("Fetched ${subscriptionsQuery.size} documents in $executionTime ms")
+
+    val allDBSubscriptions = subscriptionsQuery.map { it.getString("sub_id") }
+
+    // Filters all subscriptions to ones managed by this worker
+    val dbSubscriptionsByUserID = subscriptionsQuery.filter { workerInfo.shouldHandle(it.getLong("user_id")) }
+    val dbSubscriptions = dbSubscriptionsByUserID.map { it.getString("sub_id") }
 
     logger.info("Found existing subscriptions in DB. Count: ${dbSubscriptions.size}")
 
@@ -172,14 +187,16 @@ private suspend fun syncSubscriptions(
         .also { logger.info("Received ${it.size.ansiBold} subscriptions from Twitch that were not in the DB") }
 
     if (removeFromDB) {
-        missingFromTwitch
-            .onEach { database.subscriptions.findOneAndDelete(Document("sub_id", it)) }
-            .also { logger.info("Removed ${it.size.ansiBold} subscriptions from the DB that were not reported by Twitch") }
+        database.subscriptions
+            .deleteMany(Document("sub_id", Document("\$in", missingFromTwitch)))
+            .also { logger.info("Removed ${it.deletedCount.ansiBold} subscriptions from the DB that were not reported by Twitch") }
     }
 
     missingFromDB
         .filter { twitchClient.removeSubscription(it) }
         .also { logger.info("Removed ${it.size.ansiBold} subscriptions from Twitch that were not in the database") }
+
+    return dbSubscriptionsByUserID
 }
 
 suspend fun maybeCreateSubscriptions(

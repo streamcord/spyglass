@@ -57,8 +57,8 @@ class TwitchClient private constructor(
 
         // if unauthorized, get a new access token and store it, then rerun the request
         if (!response.status.isSuccess()) {
-            logger.error("Failed to fetch subscriptions from Twitch. Error ${response.status}. Attempting refetch in 30 seconds")
-            delay(30_000)
+            logger.error("Failed to fetch subscriptions from Twitch. Error ${response.status}. Attempting refetch in 5 seconds")
+            delay(5_000)
             return fetchExistingSubscriptions(list, cursor)
         }
 
