@@ -50,6 +50,7 @@ class TwitchClient private constructor(
         list: MutableList<SubscriptionData>,
         cursor: String?
     ): List<SubscriptionData> {
+
         val response = httpClient.get<HttpResponse>("$proxy/helix/eventsub/subscriptions") {
             withDefaults()
             cursor?.let { parameter("after", it) }
@@ -64,6 +65,9 @@ class TwitchClient private constructor(
 
         val body = Json.safeDecodeFromString<ResponseBody.GetSubs>(response.readText())
         list.addAll(body.data)
+
+
+        logger.info("Fetched ${list.size} / ${body.total} Twitch subscriptions")
 
         return if (list.size >= body.total) {
             logger.info("Total subscriptions: ${body.total}")
