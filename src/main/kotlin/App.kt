@@ -4,6 +4,7 @@ import com.mongodb.client.MongoCollection
 import com.mongodb.client.model.Projections
 import com.mongodb.client.model.changestream.OperationType
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import org.bson.Document
 import org.tinylog.configuration.Configuration
 import java.nio.ByteBuffer
@@ -71,13 +72,19 @@ suspend fun main() = coroutineScope<Unit> {
     }
         .also { logger.info("Finished removing subscriptions without associated notifications") }
 
-    dbSubscriptions.forEach { doc ->
-        val streamerID = doc.getString("streamer_id")?.toLong() ?: return@forEach
+    launch {
+        database.notifications.find()
+            .projection(Projections.include("streamer_id", "stream_end_action"))
+            .forEach { doc ->
+                val streamerID = doc.getString("streamer_id")?.toLong() ?: return@forEach
+                if (workerInfo shouldNotHandle streamerID) return@forEach
 
-        eventHandler.submitEvent(streamerID) {
-            val streamEndAction: Int? = doc.getInteger("stream_end_action")
-            maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
-        }
+                eventHandler.submitEvent(streamerID) {
+                    val streamEndAction: Int? = doc.getInteger("stream_end_action")
+                    maybeCreateSubscriptions(streamerID, streamEndAction, twitchClient, database.subscriptions)
+                }
+            }
+            .also { logger.info("Finished creating subscriptions for orphaned notifications") }
     }
 
     val opTypes = setOf(OperationType.INSERT, OperationType.REPLACE, OperationType.DELETE, OperationType.UPDATE)
@@ -143,7 +150,7 @@ private val Any.ansiBold get() = "\u001B[1m$this\u001B[0m"
  *
  * Returns a list of subscriptions managed by this worker.
  *
- * Each document contains three fields: stream_end_action, sub_id, and user_id.
+ * Each document contains two fields: sub_id, and user_id.
  */
 private suspend fun syncSubscriptions(
     twitchClient: TwitchClient,
@@ -164,7 +171,7 @@ private suspend fun syncSubscriptions(
     val subscriptionsQuery: List<Document>
     val executionTime = measureTimeMillis {
         subscriptionsQuery = database.subscriptions.find()
-            .projection(Projections.include("stream_end_action", "sub_id", "user_id"))
+            .projection(Projections.include("sub_id", "user_id"))
             .toList()
     }
 
